@@ -10,13 +10,23 @@ Os dados entram de duas formas, que convivem:
 
 ## Como rodar
 
-```bash
-pip install -r requirements.txt
-python sistema.py
-```
+**Windows (mais fácil)**
 
-Abre em http://localhost:8000. A base fica em `data/sistema.db` (SQLite, fora do git porque tem
-dados de clientes). Para outras pessoas da rede acessarem: `python sistema.py --host 0.0.0.0`.
+1. Instale o Python 3.11 ou mais novo em https://www.python.org/downloads/ e, na primeira tela
+   do instalador, marque **"Add python.exe to PATH"**.
+2. Baixe o código: no GitHub, abra o branch `claude/planilhas-dashboard-sistematizacao-j1s82p`,
+   clique em **Code › Download ZIP** e extraia a pasta.
+3. Dê dois cliques em **`iniciar.bat`**. Na primeira vez ele instala o que precisa (alguns minutos);
+   depois abre o sistema no navegador em http://localhost:8000.
+4. Deixe a janela preta aberta enquanto usa o sistema. Para encerrar, feche a janela.
+
+**Mac/Linux:** `./iniciar.sh` no terminal, dentro da pasta.
+
+**Manual:** `pip install -r requirements.txt` e `python sistema.py`.
+
+A base fica em `data/sistema.db` (SQLite, fora do git porque tem dados de clientes); faça cópia
+desse arquivo para ter backup. Para outras pessoas da rede acessarem, inicie com
+`python sistema.py --host 0.0.0.0` e elas abrem `http://<ip-do-seu-computador>:8000`.
 
 Primeiro uso: **Dados › Importar planilhas** e envie as duas planilhas do mês. Os cadastros são
 criados a partir delas; depois é só lançar e ajustar pelo sistema.
