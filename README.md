@@ -1,91 +1,83 @@
-# Vendas x Metas — base de dados + dashboard
+# Sistema Vendas x Metas
 
-Sistematiza os dois relatórios exportados do Sankhya:
+Sistema para lançar e acompanhar vendas e metas, com a mesma estrutura do Sankhya.
+Os dados entram de duas formas, que convivem:
 
-- **Demonstrativo Mensal das Vendas Efetuadas**: item de nota (cliente, produto, TOP, kg, R$);
-- **Resumo Geral das Metas/Vendas**: meta × vendido × carteira por região/vendedor/produto;
+- **lançamento manual** no próprio sistema: notas de venda (cabeçalho + itens), metas do mês e
+  todos os cadastros (vendedores, clientes, produtos, regiões, TOPs, empresas);
+- **importação das planilhas** exportadas do Sankhya: *Demonstrativo Mensal das Vendas Efetuadas*
+  e *Resumo Geral das Metas/Vendas*.
 
-numa base SQLite única, com um dashboard e uma tela para atualizar a base enviando as planilhas.
-A base usa os nomes de campo do Sankhya para que a origem possa passar a ser a API do ERP
-sem mexer no dashboard — veja [`vendas_bi/sankhya/MAPEAMENTO.md`](vendas_bi/sankhya/MAPEAMENTO.md).
-
-## Como usar (HTML — recomendado)
-
-Abra o arquivo **`dashboard.html`** no navegador (Chrome, Edge ou Firefox). Não precisa instalar nada;
-só precisa de internet na primeira abertura para carregar o leitor de planilhas.
-
-1. Aba **Importar planilhas**: arraste o Demonstrativo e o Resumo de Metas como saem do Sankhya.
-2. Os dados ficam guardados no próprio navegador e voltam quando você reabrir o arquivo.
-3. Aba **Base de dados**: exporta CSV (colunas com nomes de campo do Sankhya) e a base completa
-   em JSON, que pode ser restaurada em outro computador.
-
-Enquanto nada é importado, o painel mostra dados de exemplo fictícios, com um aviso no topo.
-
-### Painel já com os dados reais
-
-```bash
-python scripts/gerar_dashboard.py data/Demonstrativo*.xls data/RESUMO*.xls
-```
-
-Gera `data/painel_vendas_metas.html` com as planilhas embutidas (fica fora do git, pois tem dados
-de clientes). A página **Validação** confere o painel contra as planilhas originais: linhas,
-somas de cada coluna numérica, valores distintos, fórmulas do resumo de metas linha a linha e o
-cruzamento entre os dois relatórios. A página **Dados completos** mostra todas as linhas e
-colunas das duas planilhas, com busca e exportação.
-
-## Versão em Python (opcional)
-
-A mesma base em SQLite com dashboard Streamlit, útil para rodar num servidor ou agendar cargas:
+## Como rodar
 
 ```bash
 pip install -r requirements.txt
-streamlit run app.py
+python sistema.py
 ```
 
-Abra http://localhost:8501, vá em **Importar dados** e envie as duas planilhas como saem
-do sistema (.xls, .xlsx ou .csv). O tipo é detectado sozinho.
+Abre em http://localhost:8000. A base fica em `data/sistema.db` (SQLite, fora do git porque tem
+dados de clientes). Para outras pessoas da rede acessarem: `python sistema.py --host 0.0.0.0`.
 
-- Cada envio **substitui o mês** que está no arquivo; reenvie durante o mês quantas vezes quiser.
-- Arquivo idêntico ao último importado é ignorado.
-- O resumo de metas não traz o mês: usa o mês da data de emissão, ou o que você informar.
-- Pela linha de comando (para agendar): `python scripts/importar.py arquivo1.xls arquivo2.xls`
+Primeiro uso: **Dados › Importar planilhas** e envie as duas planilhas do mês. Os cadastros são
+criados a partir delas; depois é só lançar e ajustar pelo sistema.
 
-A base fica em `data/vendas.db` (fora do git, pois tem dados de clientes). Outro caminho:
-variável `VENDAS_BI_DB`.
+## Telas
 
-## Dashboard
+| Menu | Tela | O que faz |
+|---|---|---|
+| Análise | Visão geral | faturado, % da meta em kg e R$, carteira, clientes, devoluções, gráficos e rankings |
+| | Metas | meta x vendido x carteira por vendedor, supervisor, gerente, categoria, produto ou região |
+| | Vendas | faturamento por cliente, produto, UF, rede, mix, TOP, data, origem... |
+| Lançamentos | Notas de venda | lista, busca, nova nota, alterar, excluir; itens com produto, kg, valor, ST, CT-e |
+| | Metas do mês | lista, nova meta, alterar, excluir, copiar metas de um mês para outro |
+| Cadastros | Vendedores, Clientes, Produtos, Regiões, TOPs, Empresas | incluir, alterar (inclusive o código), excluir com checagem de uso |
+| Dados | Importar planilhas | envio das planilhas do Sankhya |
+| | Histórico | importações feitas, desfazer uma importação, exportar CSV e a base SQLite |
+| | Validação | confere a base contra os totais de cada planilha importada, integridade e conciliação |
 
-| Aba | Conteúdo |
-|---|---|
-| Visão geral | faturado líquido, volume, % meta em kg e R$ (com e sem carteira), clientes positivados, devoluções, bonificação, faturamento diário e acumulado × meta, meta por supervisor e categoria |
-| Metas | meta × vendido × carteira por vendedor, supervisor, gerente, categoria, produto ou região, com situação pelo ritmo do mês |
-| Vendas | ranking por cliente, produto, UF, cidade, perfil, rede, mix, linha, TOP... |
-| Importar dados | upload das planilhas e conciliação resumo de metas × demonstrativo |
-| Base de dados | histórico de cargas e exportação CSV/SQLite |
+Tema dia/noite no rodapé do menu. Funciona no celular (menu vira gaveta).
 
-Filtros de período, gerente, supervisor e vendedor ficam na barra lateral.
+## Regras
+
+- **Realizado** = vendas (V) + devoluções (D). Bonificação (B) aparece à parte.
+- Na nota, digite valores positivos; o sinal vem da TOP (devolução e bonificação ficam negativas).
+- O realizado da meta é calculado das notas pela mesma chave do resumo: região + vendedor + produto.
+  O "Vendido" do resumo importado fica guardado só para conferência (tela Validação).
+- Importar uma planilha substitui as notas/metas **importadas** do mesmo mês. O que foi lançado ou
+  alterado no sistema fica, a não ser que a planilha traga uma nota com o mesmo Nº Único.
+- Vendedor que só aparece no resumo de metas recebe código provisório (900000+) até o código real
+  chegar ou ser corrigido no cadastro. Alterar um código atualiza notas e metas.
 
 ## Estrutura
 
 ```
-dashboard.html                dashboard em HTML (arquivo único, roda no navegador)
-app.py                        dashboard (Streamlit)
+sistema.py                    inicia o servidor (FastAPI + interface web)
+web/                          interface: index.html, app.js, app.css
+vendas_bi/schema.sql          tabelas no padrão Sankhya (TGFCAB, TGFITE, TGFVEN, TGFPAR, TGFPRO, TGFTOP, TGFMET) e views
+vendas_bi/api.py              rotas /api
+vendas_bi/servicos.py         cadastros, notas, metas e validação
+vendas_bi/importer.py         leitura das planilhas e gravação nos cadastros/lançamentos
+vendas_bi/consultas.py        indicadores e agrupamentos do painel
 vendas_bi/layouts.py          de-para: coluna do relatório -> coluna da base -> campo Sankhya
-vendas_bi/schema.sql          tabelas carga, fato_venda, fato_meta e views (vw_meta, dim_*)
-vendas_bi/importer.py         leitura, validação e carga das planilhas
-vendas_bi/consultas.py        indicadores usados no dashboard
-vendas_bi/sankhya/            SQLs modelo + conector da API (fase 2) + mapeamento
-scripts/importar.py           importação por linha de comando
+vendas_bi/sankhya/            SQLs e conector da API do Sankhya (fase 2) + MAPEAMENTO.md
+scripts/importar.py           importação pela linha de comando (agendável)
+dashboard.html                painel offline em arquivo único (não precisa do servidor)
+scripts/gerar_dashboard.py    gera o painel offline com os dados das planilhas embutidos
 tests/                        testes (pytest)
 ```
 
-## Regras adotadas
+## API
 
-- **Realizado** = vendas (V) + devoluções (D, já negativas). Bonificação (B) aparece à parte.
-- Indicadores da meta recalculados com as fórmulas do próprio relatório
-  (previsto = meta × P.M. meta; % prev. = (vendido + fechado) ÷ meta; etc.).
-- Situação na aba Metas: ✔ atingiu; ▲ dentro do ritmo (≥ 90% do esperado para os dias úteis
-  seg–sáb decorridos); ✖ abaixo do ritmo.
+A interface usa a API em `/api` (documentação interativa em http://localhost:8000/docs).
+Principais rotas: `/api/cadastros/{vendedores|clientes|produtos|regioes|tops|empresas}`,
+`/api/notas`, `/api/metas`, `/api/importar`, `/api/cargas`, `/api/painel`, `/api/validacao`,
+`/api/exportar/{vendas|metas}.csv`, `/api/exportar/base.db`.
+
+## Sankhya
+
+Ver [`vendas_bi/sankhya/MAPEAMENTO.md`](vendas_bi/sankhya/MAPEAMENTO.md): tabelas equivalentes,
+de-para de colunas, regras levantadas das planilhas e o plano para trocar a importação de
+planilhas pela leitura direta da API do Sankhya.
 
 ## Testes
 

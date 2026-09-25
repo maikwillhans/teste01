@@ -98,42 +98,84 @@ def test_coluna_ausente():
         ler_relatorio(buf.getvalue(), "x.xlsx")
 
 
-def test_reimportar_substitui_periodo_e_ignora_duplicado(conn):
+def _conta(conn, tabela):
+    return conn.execute(f"SELECT COUNT(*) FROM {tabela}").fetchone()[0]
+
+
+def test_importacao_alimenta_cadastros_e_lancamentos(conn):
+    importar(conn, _planilha(METAS, [_meta(), _meta(**{"Vendedor": "SEM VENDA", "Cód.": 240, "Produto": "LOMBO"})]), "m.xlsx")
+    # vendedores do resumo ainda sem código real recebem código provisório
+    assert conn.execute("SELECT COUNT(*) FROM vendedor WHERE provisorio = 1").fetchone()[0] == 2
+    importar(conn, _planilha(VENDAS, [_venda(), _venda(**{"Cód.Produto": 240, "Descrição Produto": "LOMBO"})]), "v.xlsx")
+    assert conn.execute("SELECT codvend, provisorio FROM vendedor WHERE apelido = 'ANDRIELLE'").fetchone() == (410, 0)
+    assert conn.execute("SELECT provisorio FROM vendedor WHERE apelido = 'SEM VENDA'").fetchone() == (1,)
+    # a meta acompanhou a troca do código provisório pelo real
+    assert conn.execute("SELECT COUNT(*) FROM meta WHERE codvend = 410").fetchone()[0] == 1
+    assert (_conta(conn, "nota"), _conta(conn, "item"), _conta(conn, "parceiro"), _conta(conn, "produto")) == (1, 2, 1, 2)
+    assert conn.execute("SELECT categoria FROM produto WHERE codprod = 239").fetchone() == ("CONGELADOS AS",)
+    assert conn.execute("SELECT nomereg FROM regiao WHERE codreg = 101003008").fetchone() == ("ZV106 - ANDRIELLE",)
+
+
+def test_reimportar_substitui_mes_preserva_manual_e_ignora_duplicado(conn):
+    from vendas_bi import servicos
+
     v1 = _planilha(VENDAS, [_venda(), _venda(**{"Nº Único Nota": 1001})])
     r = importar(conn, v1, "v.xlsx")
     assert (r.linhas, r.substituidas) == (2, 0)
     assert importar(conn, v1, "v.xlsx").ignorada
 
+    manual = servicos.salvar_nota(conn, {"codemp": 1, "codtipoper": 500, "codparc": 10, "codvend": 410,
+                                         "dtmov": "2026-09-20", "itens": [{"codprod": 239, "qtd_kg": 10, "vlrtot": 150}]})
     v2 = _planilha(VENDAS, [_venda(**{"Valor Total Produto": 999.0})])
     r = importar(conn, v2, "v.xlsx")
     assert (r.linhas, r.substituidas) == (1, 2)
-    assert conn.execute("SELECT SUM(vlrtot) FROM fato_venda").fetchone()[0] == 999.0
+    assert conn.execute("SELECT SUM(vlrtot) FROM item").fetchone()[0] == 999.0 + 150.0
+    assert conn.execute("SELECT origem FROM nota WHERE nunota = ?", (manual["nunota"],)).fetchone() == ("manual",)
 
     # outro mês não apaga setembro
-    importar(conn, _planilha(VENDAS, [_venda(**{"Data Mvto": "01/10/2026"})]), "out.xlsx")
+    importar(conn, _planilha(VENDAS, [_venda(**{"Data Mvto": "01/10/2026", "Nº Único Nota": 2000})]), "out.xlsx")
     assert q.periodos(conn) == ["2026-10", "2026-09"]
 
 
+def test_desfazer_carga(conn):
+    from vendas_bi.importer import desfazer_carga
+
+    r = importar(conn, _planilha(VENDAS, [_venda()]), "v.xlsx")
+    assert desfazer_carga(conn, r.carga_id) == {"notas": 1, "metas": 0}
+    assert _conta(conn, "nota") == 0 and _conta(conn, "carga") == 0
+    assert _conta(conn, "parceiro") == 1   # cadastros continuam
+
+
 def test_indicadores_e_formulas_da_meta(conn):
+    importar(conn, _planilha(METAS, [_meta()]), "m.xlsx")
     importar(conn, _planilha(VENDAS, [
         _venda(),
-        _venda(**{"Operação": "D", "Qtde Kg": -10, "Valor Total Produto": -150.0, "TOP": 241}),
-        _venda(**{"Operação": "B", "Qtde Kg": -5, "Valor Total Produto": -75.0, "TOP": 501}),
+        _venda(**{"Operação": "D", "Qtde Kg": -10, "Valor Total Produto": -150.0, "TOP": 241, "Nº Único Nota": 1001}),
+        _venda(**{"Operação": "B", "Qtde Kg": -5, "Valor Total Produto": -75.0, "TOP": 501, "Nº Único Nota": 1002}),
     ]), "v.xlsx")
-    importar(conn, _planilha(METAS, [_meta()]), "m.xlsx")
 
-    m = conn.execute("SELECT codvend, vlr_previsto, perc_meta, perc_prev, previa FROM vw_meta").fetchone()
-    assert m == (410, 3000.0, 0.45, 0.7, 60.0)
+    m = conn.execute("SELECT codvend, qtd_vendida, vlr_faturado, vlr_previsto, perc_meta, perc_prev, previa, vendido_rel "
+                     "FROM vw_meta").fetchone()
+    assert m == (410, 90.0, 1350.0, 3000.0, 0.45, 0.7, 60.0, 90.0)   # realizado das notas = vendido do resumo
 
     k = q.indicadores(conn, q.Filtro("2026-09"))
     assert k["faturado"] == 1350.0          # venda - devolução, sem bonificação
     assert k["kg"] == 90.0
     assert k["devolucao"] == 150.0 and k["bonificacao"] == 75.0
     assert k["perc_meta_kg"] == 0.45 and k["perc_meta_valor"] == 0.45
-    assert q.conciliacao(conn, "2026-09").empty  # resumo bate com o demonstrativo
+    assert q.conciliacao(conn, "2026-09").empty
 
 
 def test_filtro_por_vendedor(conn):
-    importar(conn, _planilha(VENDAS, [_venda(), _venda(**{"Vendedor": "OUTRO", "Cód. Vendedor": 1})]), "v.xlsx")
+    importar(conn, _planilha(VENDAS, [_venda(), _venda(**{"Vendedor": "OUTRO", "Cód. Vendedor": 1, "Nº Único Nota": 1001})]), "v.xlsx")
     k = q.indicadores(conn, q.Filtro("2026-09", vendedores=["OUTRO"]))
     assert k["faturado"] == 1500.0
+
+
+def test_validacao_confere_importacao(conn):
+    from vendas_bi.servicos import validar
+
+    importar(conn, _planilha(METAS, [_meta()]), "m.xlsx")
+    importar(conn, _planilha(VENDAS, [_venda()]), "v.xlsx")
+    erros = [r for r in validar(conn, "2026-09") if r["estado"] == "erro"]
+    assert erros == []

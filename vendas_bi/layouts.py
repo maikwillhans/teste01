@@ -21,7 +21,7 @@ METAS = "metas"
 LAYOUTS = {
     VENDAS: {
         "titulo": "Demonstrativo Mensal das Vendas Efetuadas",
-        "tabela": "fato_venda",
+        "tabela": "nota",
         "colunas": {
             # cabeçalho do relatório : (coluna, tipo, origem no Sankhya)
             "Ano": (None, "str", "derivado de DTMOV"),
@@ -70,7 +70,7 @@ LAYOUTS = {
     },
     METAS: {
         "titulo": "RESUMO GERAL DAS METAS/VENDAS",
-        "tabela": "fato_meta",
+        "tabela": "meta",
         "colunas": {
             "Vendedor Ativo?": ("vendedor_ativo", "str", "TGFVEN.ATIVO"),
             "Gerente": ("gerente", "str", "TGFVEN.APELIDO (gerente)"),

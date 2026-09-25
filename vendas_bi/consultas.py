@@ -2,7 +2,8 @@
 
 Regra de "realizado": vendas (V) menos devoluções (D). Bonificação (B) é
 mostrada à parte e não conta para a meta — é a regra que reproduz o "Vendido"
-do Resumo Geral das Metas.
+do Resumo Geral das Metas. O realizado da meta é calculado das notas
+(view vw_meta), por região + vendedor + produto.
 """
 
 from __future__ import annotations
@@ -36,15 +37,15 @@ def _df(conn: sqlite3.Connection, sql: str, args=()) -> pd.DataFrame:
 
 
 def periodos(conn) -> list[str]:
-    sql = "SELECT periodo FROM fato_venda UNION SELECT periodo FROM fato_meta ORDER BY 1 DESC"
+    sql = "SELECT periodo FROM vw_venda UNION SELECT periodo FROM meta ORDER BY 1 DESC"
     return [r[0] for r in conn.execute(sql)]
 
 
 def opcoes(conn, periodo: str) -> dict[str, list[str]]:
     out = {}
     for col in ("gerente", "supervisor", "vendedor"):
-        sql = (f"SELECT {col} FROM fato_venda WHERE periodo = ? UNION "
-               f"SELECT {col} FROM fato_meta WHERE periodo = ? ORDER BY 1")
+        sql = (f"SELECT {col} FROM vw_venda WHERE periodo = ? UNION "
+               f"SELECT {col} FROM vw_meta WHERE periodo = ? ORDER BY 1")
         out[col] = [r[0] for r in conn.execute(sql, (periodo, periodo)) if r[0]]
     return out
 
@@ -64,7 +65,7 @@ def indicadores(conn, f: Filtro) -> dict:
               COUNT(DISTINCT CASE WHEN operacao='V' THEN codparc END),
               COUNT(DISTINCT CASE WHEN operacao='V' THEN nunota END),
               MAX(dtmov)
-            FROM fato_venda WHERE {w}""", a).fetchone()
+            FROM vw_venda WHERE {w}""", a).fetchone()
     m = conn.execute(
         f"""SELECT COALESCE(SUM(qtd_meta),0), COALESCE(SUM(vlr_previsto),0),
                    COALESCE(SUM(qtd_vendida),0), COALESCE(SUM(vlr_faturado),0),
@@ -88,7 +89,7 @@ def vendas_diarias(conn, f: Filtro) -> pd.DataFrame:
     return _df(conn, f"""SELECT dtmov AS data,
                   SUM(CASE WHEN {REALIZADO} THEN vlrtot ELSE 0 END) AS faturado,
                   SUM(CASE WHEN {REALIZADO} THEN qtd_kg ELSE 0 END) AS kg
-               FROM fato_venda WHERE {w} GROUP BY dtmov ORDER BY dtmov""", a)
+               FROM vw_venda WHERE {w} GROUP BY dtmov ORDER BY dtmov""", a)
 
 
 def meta_por(conn, f: Filtro, dimensao: str) -> pd.DataFrame:
@@ -106,9 +107,13 @@ def meta_por(conn, f: Filtro, dimensao: str) -> pd.DataFrame:
     return df.sort_values("meta_kg", ascending=False)
 
 
+DIM_VENDAS = {"nomeparc", "descrprod", "uf", "cidade", "perfil", "rede", "mix_comercial", "mix_biblia", "linha",
+              "vendedor", "supervisor", "gerente", "descroper", "grupoprod", "nomereg", "regiao_pais", "familia",
+              "operacao", "nomeempresa", "dtmov", "origem"}
+
+
 def vendas_por(conn, f: Filtro, dimensao: str, limite: int | None = None) -> pd.DataFrame:
-    assert dimensao in {"nomeparc", "descrprod", "uf", "cidade", "perfil", "rede", "mix_comercial",
-                        "mix_biblia", "linha", "vendedor", "supervisor", "descroper", "grupoprod"}
+    assert dimensao in DIM_VENDAS
     w, a = f.where()
     sql = f"""SELECT {dimensao} AS grupo,
                   SUM(CASE WHEN {REALIZADO} THEN vlrtot ELSE 0 END) AS faturado,
@@ -116,7 +121,7 @@ def vendas_por(conn, f: Filtro, dimensao: str, limite: int | None = None) -> pd.
                   SUM(CASE WHEN operacao='D' THEN -vlrtot ELSE 0 END) AS devolucao,
                   COUNT(DISTINCT CASE WHEN operacao='V' THEN codparc END) AS clientes,
                   COUNT(DISTINCT CASE WHEN operacao='V' THEN nunota END) AS notas
-              FROM fato_venda WHERE {w} GROUP BY {dimensao} ORDER BY faturado DESC"""
+              FROM vw_venda WHERE {w} GROUP BY {dimensao} ORDER BY faturado DESC"""
     if limite:
         sql += f" LIMIT {int(limite)}"
     df = _df(conn, sql, a)
@@ -126,7 +131,7 @@ def vendas_por(conn, f: Filtro, dimensao: str, limite: int | None = None) -> pd.
 
 def detalhe_vendas(conn, f: Filtro) -> pd.DataFrame:
     w, a = f.where()
-    return _df(conn, f"SELECT * FROM fato_venda WHERE {w} ORDER BY dtmov, nunota", a)
+    return _df(conn, f"SELECT * FROM vw_venda WHERE {w} ORDER BY dtmov, nunota", a)
 
 
 def detalhe_metas(conn, f: Filtro) -> pd.DataFrame:
@@ -140,22 +145,16 @@ def cargas(conn) -> pd.DataFrame:
 
 
 def conciliacao(conn, periodo: str) -> pd.DataFrame:
-    """Compara o 'Vendido' do resumo de metas com a soma do demonstrativo.
+    """Compara o 'Vendido' do resumo de metas importado com o realizado das notas.
 
     Diferenças costumam vir de notas emitidas entre a extração de um relatório
-    e do outro, ou de itens lançados em outra região/vendedor.
+    e do outro, ou de notas lançadas em outra região/vendedor.
     """
-    return _df(conn, f"""
-        WITH v AS (SELECT codreg, codprod, SUM(qtd_kg) kg, SUM(vlrtot) valor
-                   FROM fato_venda WHERE periodo = ? AND {REALIZADO} GROUP BY codreg, codprod),
-             m AS (SELECT codreg, codprod, MAX(nomereg) nomereg, MAX(descrprod) descrprod,
-                          SUM(qtd_vendida) kg, SUM(vlr_faturado) valor
-                   FROM fato_meta WHERE periodo = ? GROUP BY codreg, codprod)
-        SELECT m.nomereg AS regiao, m.descrprod AS produto,
-               m.kg AS kg_resumo_metas, COALESCE(v.kg,0) AS kg_demonstrativo,
-               m.kg - COALESCE(v.kg,0) AS dif_kg,
-               m.valor AS valor_resumo_metas, COALESCE(v.valor,0) AS valor_demonstrativo,
-               m.valor - COALESCE(v.valor,0) AS dif_valor
-        FROM m LEFT JOIN v USING (codreg, codprod)
-        WHERE ABS(m.kg - COALESCE(v.kg,0)) > 0.01 OR ABS(m.valor - COALESCE(v.valor,0)) > 0.05
-        ORDER BY ABS(m.valor - COALESCE(v.valor,0)) DESC""", (periodo, periodo))
+    return _df(conn, """
+        SELECT nomereg AS regiao, vendedor, descrprod AS produto,
+               vendido_rel AS kg_resumo, qtd_vendida AS kg_notas, vendido_rel - qtd_vendida AS dif_kg,
+               faturado_rel AS valor_resumo, vlr_faturado AS valor_notas, faturado_rel - vlr_faturado AS dif_valor
+        FROM vw_meta
+        WHERE periodo = ? AND vendido_rel IS NOT NULL
+          AND (ABS(vendido_rel - qtd_vendida) > 0.01 OR ABS(faturado_rel - vlr_faturado) > 0.05)
+        ORDER BY ABS(faturado_rel - vlr_faturado) DESC""", (periodo,))

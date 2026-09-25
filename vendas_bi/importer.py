@@ -1,8 +1,12 @@
 """Importação das planilhas exportadas para a base.
 
 Fluxo: ler arquivo -> detectar tipo pelo título/cabeçalho -> validar colunas
--> normalizar tipos -> substituir os períodos presentes no arquivo -> registrar
-a carga. Uma carga é atômica: ou entra inteira, ou nada muda.
+-> normalizar tipos -> atualizar cadastros (vendedores, clientes, produtos,
+regiões, TOPs, empresas) -> substituir os lançamentos importados do período
+-> registrar a carga. Uma carga é atômica: ou entra inteira, ou nada muda.
+
+Lançamentos feitos à mão (origem 'manual') não são apagados por uma
+importação, a não ser que a planilha traga uma nota com o mesmo Nº Único.
 
 A mesma função ``gravar`` recebe DataFrames já normalizados, então uma carga
 vinda direto do Sankhya (``vendas_bi/sankhya/``) usa exatamente o mesmo caminho.
@@ -12,6 +16,7 @@ from __future__ import annotations
 
 import hashlib
 import io
+import json
 import re
 import sqlite3
 from dataclasses import dataclass, field
@@ -50,6 +55,7 @@ class Relatorio:
     emitido_em: datetime | None = None
     usuario: str | None = None
     avisos: list[str] = field(default_factory=list)
+    controle: dict | None = None        # totais lidos direto das células
 
     @property
     def periodos(self) -> list[str]:
@@ -187,52 +193,182 @@ def ler_relatorio(origem, nome: str, periodo_meta: str | None = None, todas: boo
         raise ErroImportacao("Nenhuma linha de dados encontrada no relatório.")
 
     colunas = COLUNAS_FATO[tipo] + ([c for c in saida.columns if c.endswith("_rel")] if todas else [])
-    return Relatorio(tipo, saida[colunas].reset_index(drop=True), emitido, usuario, avisos)
+    controle = _controle(bruto.iloc[linha_cab + 1:].set_axis(cab, axis=1), tipo, total)
+    return Relatorio(tipo, saida[colunas].reset_index(drop=True), emitido, usuario, avisos, controle)
+
+
+CONTROLE = {
+    VENDAS: {"somas": ["Qtde Kg", "Valor Total Produto", "Valor Total Com ST", "Valor ST"],
+             "distintos": ["Nº Único Nota", "Cód. Cliente", "Cód.Produto", "Cód. Vendedor"],
+             "contagem": "Operação"},
+    METAS: {"somas": ["Vendido", "Meta", "Fechado", "Valor Fechado", "Valor Faturado", "Valor Fat. Previsto"],
+            "distintos": ["Vendedor", "Cód.", "Região"],
+            "contagem": "Categoria"},
+}
+
+
+def _controle(df: pd.DataFrame, tipo: str, total: int | None) -> dict:
+    """Totais das células originais, usados depois para conferir a base."""
+    cfg = CONTROLE[tipo]
+    chave = df[LAYOUTS[tipo]["obrigatorias"][0]]
+    df = df[chave.notna() & (chave.astype(str).str.strip() != "")]
+    num = lambda c: pd.to_numeric(df[c], errors="coerce").fillna(0)
+    return {
+        "linhas": int(len(df)), "total_informado": total,
+        "somas": {c: round(float(num(c).sum()), 4) for c in cfg["somas"]},
+        "distintos": {c: int(df[c].dropna().astype(str).str.strip().replace("", pd.NA).dropna().nunique()) for c in cfg["distintos"]},
+        "contagem_campo": cfg["contagem"],
+        "contagem": {str(k): int(v) for k, v in df[cfg["contagem"]].astype(str).str.strip().value_counts().items()},
+    }
 
 
 # --------------------------------------------------------------------- gravação
 
+def _linhas(df: pd.DataFrame, colunas: list[str]):
+    sub = df[colunas].astype(object)
+    return [tuple(None if pd.isna(v) else v for v in r) for r in sub.itertuples(index=False, name=None)]
+
+
+def _upsert(conn, tabela: str, chave: str, df: pd.DataFrame, colunas: list[str], atualizar: list[str] | None = None):
+    """Insere ou atualiza cadastros. Campos vazios na planilha não apagam o que já existe."""
+    atualizar = colunas if atualizar is None else atualizar
+    todas = [chave, *colunas]
+    sets = ", ".join(f"{c} = COALESCE(excluded.{c}, {c})" for c in atualizar)
+    sql = (f"INSERT INTO {tabela} ({','.join(todas)}) VALUES ({','.join('?' * len(todas))}) "
+           f"ON CONFLICT({chave}) DO " + (f"UPDATE SET {sets}" if sets else "NOTHING"))
+    conn.executemany(sql, _linhas(df.drop_duplicates(chave), todas))
+
+
+def _cadastros_regiao(conn, df):
+    reg = df.dropna(subset=["codreg"])[["codreg", "nomereg"]]
+    _upsert(conn, "regiao", "codreg", reg, ["nomereg"])
+
+
+def _garantir_vendedor(conn, codvend: int, apelido: str) -> None:
+    """Se o apelido já existe com outro código provisório, assume o código real."""
+    atual = conn.execute("SELECT codvend, provisorio FROM vendedor WHERE apelido = ?", (apelido,)).fetchone()
+    if atual and atual[0] != codvend:
+        if atual[1]:
+            conn.execute("UPDATE vendedor SET codvend = ?, provisorio = 0 WHERE apelido = ?", (codvend, apelido))
+        else:
+            conn.execute("UPDATE vendedor SET apelido = apelido || ' (' || codvend || ')' WHERE apelido = ?", (apelido,))
+
+
+def _gravar_vendas(conn, df: pd.DataFrame, carga_id: int, origem: str) -> int:
+    empresas = df[["codemp"]].dropna().drop_duplicates()
+    empresas["nomeempresa"] = "Empresa " + empresas["codemp"].astype(str)
+    _upsert(conn, "empresa", "codemp", empresas, ["nomeempresa"], atualizar=[])
+    _cadastros_regiao(conn, df)
+    vend = df.dropna(subset=["codvend"]).copy()
+    reg_vend = vend.groupby("codvend")["codreg"].agg(lambda s: s.mode().iloc[0] if s.notna().any() else None)
+    vend = vend.drop_duplicates("codvend")[["codvend", "vendedor", "supervisor", "gerente"]].rename(columns={"vendedor": "apelido"})
+    vend["codreg"] = vend["codvend"].map(reg_vend)
+    for codvend, apelido in vend[["codvend", "apelido"]].itertuples(index=False):
+        _garantir_vendedor(conn, int(codvend), apelido)
+    _upsert(conn, "vendedor", "codvend", vend, ["apelido", "supervisor", "gerente", "codreg"])
+    conn.execute("UPDATE vendedor SET provisorio = 0 WHERE codvend IN (%s)" % ",".join(str(int(c)) for c in vend.codvend))
+    _upsert(conn, "parceiro", "codparc", df, ["nomeparc", "perfil", "cidade", "uf", "regiao_pais", "codrede", "rede"])
+    _upsert(conn, "produto", "codprod", df, ["descrprod", "codgrupoprod", "grupoprod", "linha", "familia",
+                                               "codmix_comercial", "mix_comercial", "codmix_biblia", "mix_biblia"])
+    _upsert(conn, "tipo_operacao", "codtipoper", df, ["descroper", "operacao"])
+
+    periodos = sorted(df["periodo"].unique())
+    nunotas = [int(n) for n in df["nunota"].unique()]
+    removidas = conn.execute(
+        f"SELECT COUNT(*) FROM item i JOIN nota n ON n.nunota = i.nunota WHERE "
+        f"(substr(n.dtmov,1,7) IN ({','.join('?' * len(periodos))}) AND n.origem <> 'manual')",
+        periodos).fetchone()[0]
+    conn.execute(f"DELETE FROM nota WHERE substr(dtmov,1,7) IN ({','.join('?' * len(periodos))}) AND origem <> 'manual'", periodos)
+    for i in range(0, len(nunotas), 500):
+        lote = nunotas[i:i + 500]
+        conn.execute(f"DELETE FROM nota WHERE nunota IN ({','.join('?' * len(lote))})", lote)
+
+    cab = df.drop_duplicates("nunota")[["nunota", "numnota", "codemp", "dtmov", "codtipoper", "codparc", "codvend", "codreg", "ref_rvv"]]
+    conn.executemany(
+        "INSERT INTO nota (nunota, numnota, codemp, dtmov, codtipoper, codparc, codvend, codreg, ref_rvv, origem, carga_id) "
+        "VALUES (?,?,?,?,?,?,?,?,?,?,?)",
+        [(*r, origem, carga_id) for r in _linhas(cab, list(cab.columns))])
+    itens = df[["nunota", "codprod", "qtd_kg", "vlrtot", "vlrsubst", "vlrtot_st", "nucte"]].copy()
+    itens.insert(1, "sequencia", itens.groupby("nunota").cumcount() + 1)
+    conn.executemany(
+        "INSERT INTO item (nunota, sequencia, codprod, qtd_kg, vlrtot, vlrsubst, vlrtot_st, nucte) VALUES (?,?,?,?,?,?,?,?)",
+        _linhas(itens, list(itens.columns)))
+    return removidas
+
+
+def _gravar_metas(conn, df: pd.DataFrame, carga_id: int, origem: str) -> int:
+    _cadastros_regiao(conn, df)
+    prox = conn.execute("SELECT MAX(900000, COALESCE(MAX(codvend), 0) + 1) FROM vendedor").fetchone()[0]
+    codigos = {}
+    for apelido, sup, ger, codreg, ativo in df.drop_duplicates("vendedor")[
+            ["vendedor", "supervisor", "gerente", "codreg", "vendedor_ativo"]].astype(object).itertuples(index=False):
+        ativo = "N" if str(ativo).strip().lower().startswith("n") else "S"
+        r = conn.execute("SELECT codvend FROM vendedor WHERE apelido = ?", (apelido,)).fetchone()
+        if r:
+            conn.execute("UPDATE vendedor SET supervisor = COALESCE(?, supervisor), gerente = COALESCE(?, gerente), ativo = ? "
+                         "WHERE codvend = ?", (sup, ger, ativo, r[0]))
+            codigos[apelido] = r[0]
+        else:  # vendedor sem venda: recebe código provisório até vir o código real
+            conn.execute("INSERT INTO vendedor (codvend, apelido, supervisor, gerente, codreg, ativo, provisorio) "
+                         "VALUES (?,?,?,?,?,?,1)", (prox, apelido, sup, ger, None if pd.isna(codreg) else int(codreg), ativo))
+            codigos[apelido] = prox
+            prox += 1
+    for codprod, descr, cat in df.drop_duplicates("codprod")[["codprod", "descrprod", "categoria"]].itertuples(index=False):
+        conn.execute("INSERT INTO produto (codprod, descrprod, categoria) VALUES (?,?,?) "
+                     "ON CONFLICT(codprod) DO UPDATE SET categoria = COALESCE(excluded.categoria, categoria)",
+                     (int(codprod), descr, cat))
+
+    periodos = sorted(df["periodo"].unique())
+    marc = ",".join("?" * len(periodos))
+    removidas = conn.execute(f"SELECT COUNT(*) FROM meta WHERE periodo IN ({marc}) AND origem <> 'manual'", periodos).fetchone()[0]
+    conn.execute(f"DELETE FROM meta WHERE periodo IN ({marc}) AND origem <> 'manual'", periodos)
+    m = df.copy()
+    m["codvend"] = m["vendedor"].map(codigos)
+    colunas = ["periodo", "codreg", "codvend", "codprod", "qtd_meta", "pm_meta", "qtd_fechada", "vlr_fechado",
+               "qtd_vendida", "vlr_faturado"]
+    conn.executemany(
+        "INSERT INTO meta (periodo, codreg, codvend, codprod, qtd_meta, pm_meta, qtd_fechada, vlr_fechado, "
+        "vendido_rel, faturado_rel, origem, carga_id) VALUES (?,?,?,?,?,?,?,?,?,?,?,?) "
+        "ON CONFLICT(periodo, codreg, codvend, codprod) DO UPDATE SET qtd_meta = excluded.qtd_meta, "
+        "pm_meta = excluded.pm_meta, qtd_fechada = excluded.qtd_fechada, vlr_fechado = excluded.vlr_fechado, "
+        "vendido_rel = excluded.vendido_rel, faturado_rel = excluded.faturado_rel, origem = excluded.origem, "
+        "carga_id = excluded.carga_id",
+        [(*r, origem, carga_id) for r in _linhas(m, colunas)])
+    return removidas
+
+
 def gravar(conn: sqlite3.Connection, rel: Relatorio, arquivo: str | None = None,
            sha256: str | None = None, origem: str = "planilha") -> ResultadoCarga:
-    """Substitui na base os períodos do relatório pelos dados dele (atômico)."""
-    tabela = LAYOUTS[rel.tipo]["tabela"]
+    """Atualiza cadastros e substitui os lançamentos importados dos períodos do relatório."""
     periodos = rel.periodos
-    marcadores = ",".join("?" * len(periodos))
-    dados = rel.dados.astype(object).where(rel.dados.notna(), None)
     with conn:
         cur = conn.execute(
-            "INSERT INTO carga (tipo, origem, arquivo, sha256, periodos, linhas, emitido_em, usuario_relatorio) "
-            "VALUES (?,?,?,?,?,?,?,?)",
-            (rel.tipo, origem, arquivo, sha256, ",".join(periodos), len(dados),
-             rel.emitido_em.isoformat(sep=" ") if rel.emitido_em else None, rel.usuario),
+            "INSERT INTO carga (tipo, origem, arquivo, sha256, periodos, linhas, emitido_em, usuario_relatorio, controle) "
+            "VALUES (?,?,?,?,?,?,?,?,?)",
+            (rel.tipo, origem, arquivo, sha256, ",".join(periodos), len(rel.dados),
+             rel.emitido_em.isoformat(sep=" ") if rel.emitido_em else None, rel.usuario,
+             json.dumps(rel.controle, ensure_ascii=False) if rel.controle else None),
         )
         carga_id = cur.lastrowid
-        removidas = conn.execute(
-            f"DELETE FROM {tabela} WHERE periodo IN ({marcadores})", periodos
-        ).rowcount
-        colunas = ["carga_id", *dados.columns]
-        conn.executemany(
-            f"INSERT INTO {tabela} ({','.join(colunas)}) VALUES ({','.join('?' * len(colunas))})",
-            ([carga_id, *linha] for linha in dados.itertuples(index=False, name=None)),
-        )
-        _resolver_codvend(conn)
-    return ResultadoCarga(carga_id, rel.tipo, periodos, len(dados), removidas, rel.avisos)
+        if rel.tipo == VENDAS:
+            removidas = _gravar_vendas(conn, rel.dados, carga_id, origem)
+        else:
+            removidas = _gravar_metas(conn, rel.dados, carga_id, origem)
+    return ResultadoCarga(carga_id, rel.tipo, periodos, len(rel.dados), removidas, rel.avisos)
 
 
-def _resolver_codvend(conn: sqlite3.Connection) -> None:
-    """O resumo de metas não traz o código do vendedor; busca pelo apelido."""
-    conn.execute(
-        """UPDATE fato_meta SET codvend = (
-               SELECT v.codvend FROM fato_venda v
-               WHERE v.vendedor = fato_meta.vendedor AND v.codvend IS NOT NULL
-               GROUP BY v.codvend ORDER BY COUNT(*) DESC LIMIT 1)
-           WHERE codvend IS NULL"""
-    )
+def desfazer_carga(conn: sqlite3.Connection, carga_id: int) -> dict:
+    """Remove os lançamentos que vieram de uma carga (os cadastros ficam)."""
+    with conn:
+        notas = conn.execute("DELETE FROM nota WHERE carga_id = ?", (carga_id,)).rowcount
+        metas = conn.execute("DELETE FROM meta WHERE carga_id = ?", (carga_id,)).rowcount
+        conn.execute("DELETE FROM carga WHERE id = ?", (carga_id,))
+    return {"notas": notas, "metas": metas}
 
 
 def importar(conn: sqlite3.Connection, origem, nome: str | None = None,
              periodo_meta: str | None = None, forcar: bool = False) -> ResultadoCarga:
-    """Lê um arquivo e grava na base. Arquivo idêntico já importado é ignorado."""
+    """Lê um arquivo e grava na base. Arquivo idêntico ao último importado é ignorado."""
     if isinstance(origem, (str, Path)):
         nome = nome or Path(origem).name
         conteudo = Path(origem).read_bytes()
@@ -250,10 +386,8 @@ def importar(conn: sqlite3.Connection, origem, nome: str | None = None,
             "SELECT id FROM carga WHERE sha256 = ? AND tipo = ? AND periodos = ? ORDER BY id DESC LIMIT 1",
             (sha, rel.tipo, ",".join(rel.periodos)),
         ).fetchone()
-        ultima = conn.execute(
-            f"SELECT MAX(carga_id) FROM {LAYOUTS[rel.tipo]['tabela']} WHERE periodo IN ({','.join('?' * len(rel.periodos))})",
-            rel.periodos,
-        ).fetchone()[0]
+        tabela = "nota" if rel.tipo == VENDAS else "meta"
+        ultima = conn.execute(f"SELECT MAX(carga_id) FROM {tabela}").fetchone()[0]
         if ja and ultima == ja[0]:
             return ResultadoCarga(ja[0], rel.tipo, rel.periodos, len(rel.dados), 0,
                                   ["Arquivo idêntico já importado; nada foi alterado."], ignorada=True)

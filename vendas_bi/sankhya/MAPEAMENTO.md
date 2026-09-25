@@ -10,12 +10,34 @@ migração acontece em etapas sem refazer o dashboard.
 
 | Fase | Como os dados chegam | O que muda |
 |---|---|---|
-| 1 (agora) | Exporta as planilhas no Sankhya e envia na aba **Importar dados** | nada |
+| 1 (agora) | Lançamento manual no sistema e/ou planilhas exportadas do Sankhya em **Dados › Importar planilhas** | nada |
 | 2 | `python -m vendas_bi.sankhya.conector AAAA-MM` busca direto na API do Sankhya (agendável) | só a origem da carga; base e dashboard iguais |
 | 3 | Dashboard dentro do Sankhya (Construtor de Componentes de BI / Dashboards) | reaproveita as SQLs de `vendas.sql` e `metas.sql` e os indicadores de `consultas.py` |
 
 Na fase 2 cada carga fica registrada em `carga.origem = 'sankhya'`, então dá
 para rodar planilha e API em paralelo por um mês e comparar.
+
+## Tabelas do sistema x Sankhya
+
+| Sistema | Sankhya | Conteúdo |
+|---|---|---|
+| `empresa` | TSIEMP | empresas |
+| `regiao` | TSIREG | regiões de venda |
+| `vendedor` | TGFVEN | vendedores, com supervisor e gerente |
+| `parceiro` | TGFPAR (+ TSICID/TSIUFS) | clientes |
+| `produto` | TGFPRO / TGFGRU | produtos e grupos |
+| `tipo_operacao` | TGFTOP | TOPs, com a operação V/D/B |
+| `nota` | TGFCAB | cabeçalho da nota |
+| `item` | TGFITE | itens da nota |
+| `meta` | TGFMET | meta por região, vendedor e produto no mês |
+
+A view `vw_venda` reproduz o Demonstrativo Mensal linha a linha e a
+`vw_meta` reproduz o Resumo Geral das Metas, com o realizado calculado das
+notas. Vendedores que aparecem só no resumo de metas recebem um código
+provisório (a partir de 900000); quando o código real chega por uma
+planilha de vendas, ou é corrigido em Cadastros › Vendedores, notas e metas
+acompanham. Notas lançadas no sistema usam Nº Único a partir de
+900.000.000, faixa que não colide com o Sankhya.
 
 ## De-para das colunas
 
