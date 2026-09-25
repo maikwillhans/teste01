@@ -9,7 +9,21 @@ numa base SQLite única, com um dashboard e uma tela para atualizar a base envia
 A base usa os nomes de campo do Sankhya para que a origem possa passar a ser a API do ERP
 sem mexer no dashboard — veja [`vendas_bi/sankhya/MAPEAMENTO.md`](vendas_bi/sankhya/MAPEAMENTO.md).
 
-## Como usar
+## Como usar (HTML — recomendado)
+
+Abra o arquivo **`dashboard.html`** no navegador (Chrome, Edge ou Firefox). Não precisa instalar nada;
+só precisa de internet na primeira abertura para carregar o leitor de planilhas.
+
+1. Aba **Importar planilhas**: arraste o Demonstrativo e o Resumo de Metas como saem do Sankhya.
+2. Os dados ficam guardados no próprio navegador e voltam quando você reabrir o arquivo.
+3. Aba **Base de dados**: exporta CSV (colunas com nomes de campo do Sankhya) e a base completa
+   em JSON, que pode ser restaurada em outro computador.
+
+Enquanto nada é importado, o painel mostra dados de exemplo fictícios, com um aviso no topo.
+
+## Versão em Python (opcional)
+
+A mesma base em SQLite com dashboard Streamlit, útil para rodar num servidor ou agendar cargas:
 
 ```bash
 pip install -r requirements.txt
@@ -42,6 +56,7 @@ Filtros de período, gerente, supervisor e vendedor ficam na barra lateral.
 ## Estrutura
 
 ```
+dashboard.html                dashboard em HTML (arquivo único, roda no navegador)
 app.py                        dashboard (Streamlit)
 vendas_bi/layouts.py          de-para: coluna do relatório -> coluna da base -> campo Sankhya
 vendas_bi/schema.sql          tabelas carga, fato_venda, fato_meta e views (vw_meta, dim_*)

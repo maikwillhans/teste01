@@ -1,0 +1,910 @@
+<title>Painel Vendas x Metas</title>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=IBM+Plex+Sans:wght@400;500;600;700&family=IBM+Plex+Sans+Condensed:wght@500;600&display=swap">
+<script src="https://cdnjs.cloudflare.com/ajax/libs/xlsx/0.18.5/xlsx.full.min.js"></script>
+<style>
+:root {
+  color-scheme: light;
+  --ground: #f4f5f3;
+  --surface: #fcfcfb;
+  --surface-2: #eef0ec;
+  --ink: #111417;
+  --ink-2: #4c5157;
+  --muted: #858a87;
+  --grid: #e1e3dd;
+  --axis: #c3c6bf;
+  --line: rgba(17, 20, 23, .10);
+  --accent: #2a78d6;
+  --accent-soft: #b7d3f6;
+  --accent-ink: #1c5cab;
+  --good: #0ca30c;  --good-ink: #006300;
+  --warn: #fab219;  --warn-ink: #8a5a00;
+  --crit: #d03b3b;  --crit-ink: #b12a2a;
+  --example: #fff4d6; --example-ink: #6b4a00;
+  --font: "IBM Plex Sans", system-ui, -apple-system, "Segoe UI", sans-serif;
+  --font-cond: "IBM Plex Sans Condensed", "Arial Narrow", system-ui, sans-serif;
+}
+@media (prefers-color-scheme: dark) {
+  :root:not([data-theme="light"]) {
+    color-scheme: dark;
+    --ground: #0f1112; --surface: #1a1c1c; --surface-2: #232626;
+    --ink: #f5f6f4; --ink-2: #c3c6bf; --muted: #8d918d;
+    --grid: #2c2f2e; --axis: #3a3e3c; --line: rgba(255,255,255,.10);
+    --accent: #3987e5; --accent-soft: #1f4a7d; --accent-ink: #86b6ef;
+    --good-ink: #3ccf3c; --warn-ink: #fab219; --crit-ink: #ef7070;
+    --example: #3a2f12; --example-ink: #f3d58a;
+  }
+}
+:root[data-theme="dark"] {
+  color-scheme: dark;
+  --ground: #0f1112; --surface: #1a1c1c; --surface-2: #232626;
+  --ink: #f5f6f4; --ink-2: #c3c6bf; --muted: #8d918d;
+  --grid: #2c2f2e; --axis: #3a3e3c; --line: rgba(255,255,255,.10);
+  --accent: #3987e5; --accent-soft: #1f4a7d; --accent-ink: #86b6ef;
+  --good-ink: #3ccf3c; --warn-ink: #fab219; --crit-ink: #ef7070;
+  --example: #3a2f12; --example-ink: #f3d58a;
+}
+
+* { box-sizing: border-box; }
+[hidden] { display: none !important; }
+body { margin: 0; background: var(--ground); color: var(--ink); font: 14px/1.45 var(--font); }
+.wrap { max-width: 1360px; margin: 0 auto; padding-inline: 20px; padding-block: 0 48px; }
+h1, h2, h3 { text-wrap: balance; margin: 0; }
+.num, td.n, th.n { font-variant-numeric: tabular-nums; }
+button, select, input { font: inherit; color: inherit; }
+:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
+
+/* topo */
+.top { position: sticky; top: env(safe-area-inset-top, 0px); z-index: 5; background: var(--ground);
+       border-bottom: 1px solid var(--line); }
+.top-in { max-width: 1360px; margin: 0 auto; padding-inline: 20px; padding-block: 14px 0; }
+.brand { display: flex; align-items: baseline; gap: 12px; flex-wrap: wrap; }
+.brand h1 { font-size: 20px; font-weight: 700; letter-spacing: -.01em; }
+.brand .sub { color: var(--muted); font-size: 13px; }
+.filters { display: flex; flex-wrap: wrap; gap: 10px; margin-top: 12px; align-items: end; }
+.field { display: grid; gap: 3px; min-width: 150px; flex: 1 1 150px; max-width: 240px; }
+.field label { font: 600 11px/1 var(--font-cond); letter-spacing: .06em; text-transform: uppercase; color: var(--muted); }
+.field select { background: var(--surface); border: 1px solid var(--line); border-radius: 6px; padding: 7px 8px; width: 100%; }
+.tabs { display: flex; gap: 2px; margin-top: 12px; overflow-x: auto; }
+.tab { background: none; border: 0; padding: 10px 14px; cursor: pointer; color: var(--ink-2); font-weight: 500;
+       border-bottom: 2px solid transparent; white-space: nowrap; }
+.tab[aria-selected="true"] { color: var(--ink); border-bottom-color: var(--accent); font-weight: 600; }
+.tab:hover { color: var(--ink); }
+
+.banner { margin-top: 18px; padding: 10px 14px; border-radius: 8px; background: var(--example); color: var(--example-ink);
+          display: flex; gap: 12px; align-items: center; flex-wrap: wrap; }
+.banner b { font-weight: 600; }
+.btn { background: var(--accent); color: #fff; border: 0; border-radius: 6px; padding: 8px 14px; cursor: pointer; font-weight: 600; }
+.btn.ghost { background: transparent; color: var(--ink); border: 1px solid var(--line); }
+.btn.small { padding: 5px 10px; font-size: 13px; }
+.btn:disabled { opacity: .45; cursor: default; }
+.meta-line { color: var(--muted); font-size: 13px; margin-top: 16px; }
+.meta-line b { color: var(--ink-2); font-weight: 600; }
+
+section.panel { display: grid; gap: 18px; margin-top: 16px; }
+.kpis { display: grid; grid-template-columns: repeat(4, minmax(0, 1fr)); gap: 10px; }
+@media (max-width: 1000px) { .kpis { grid-template-columns: repeat(2, minmax(0, 1fr)); } }
+.kpi { background: var(--surface); border: 1px solid var(--line); border-radius: 8px; padding: 12px 14px; display: grid; gap: 4px; align-content: start; }
+.kpi .l { font: 600 11px/1.2 var(--font-cond); letter-spacing: .06em; text-transform: uppercase; color: var(--muted); }
+.kpi .v { font-size: 24px; font-weight: 600; letter-spacing: -.01em; line-height: 1.15; }
+.kpi .d { font-size: 12.5px; color: var(--ink-2); }
+.kpi.hero { grid-column: span 2; }
+.kpi.hero .v { font-size: 30px; }
+.meter { height: 6px; border-radius: 3px; background: var(--surface-2); position: relative; overflow: hidden; margin-top: 4px; }
+.meter i { position: absolute; inset: 0 auto 0 0; background: var(--accent); border-radius: 3px; }
+.meter i.soft { background: var(--accent-soft); }
+.meter s { position: absolute; top: -2px; bottom: -2px; width: 2px; background: var(--ink); }
+
+.grid2 { display: grid; grid-template-columns: repeat(auto-fit, minmax(440px, 1fr)); gap: 18px; }
+.card { background: var(--surface); border: 1px solid var(--line); border-radius: 8px; padding: 14px 16px 16px; min-width: 0; }
+.card h3 { font-size: 14px; font-weight: 600; margin-bottom: 2px; }
+.card .hint { color: var(--muted); font-size: 12.5px; margin-bottom: 10px; }
+.chart svg { width: 100%; height: auto; display: block; overflow: visible; }
+.chart text { fill: var(--muted); font: 11px var(--font); }
+.legend { display: flex; gap: 14px; flex-wrap: wrap; font-size: 12.5px; color: var(--ink-2); margin-bottom: 8px; }
+.legend span { display: inline-flex; align-items: center; gap: 6px; }
+.sw { width: 12px; height: 12px; border-radius: 3px; display: inline-block; }
+.sw.tick { width: 3px; height: 14px; border-radius: 0; background: var(--ink); }
+.sw.dash { width: 16px; height: 0; border-top: 2px dashed var(--ink); border-radius: 0; }
+
+/* barras horizontais (meta e ranking) */
+.hbars { display: grid; gap: 6px; }
+.hrow { display: grid; grid-template-columns: minmax(90px, 210px) 1fr 64px; gap: 10px; align-items: center; font-size: 12.5px; }
+.hrow .lab { color: var(--ink-2); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; text-align: right; }
+.hrow .val { text-align: right; font-variant-numeric: tabular-nums; color: var(--ink); font-weight: 500; }
+.track { position: relative; height: 18px; }
+.track .b { position: absolute; top: 2px; bottom: 2px; left: 0; border-radius: 0 4px 4px 0; }
+.track .b.v { background: var(--accent); }
+.track .b.c { background: var(--accent-soft); }
+.track .t { position: absolute; top: -1px; bottom: -1px; width: 3px; margin-left: -1.5px; background: var(--ink); border-radius: 1px; }
+.hrow:hover .lab { color: var(--ink); }
+.hrow { cursor: default; }
+
+.controls { display: flex; flex-wrap: wrap; gap: 8px; align-items: center; }
+.seg { display: inline-flex; flex-wrap: wrap; border: 1px solid var(--line); border-radius: 7px; overflow: hidden; background: var(--surface); }
+.seg button { border: 0; background: none; padding: 6px 11px; cursor: pointer; color: var(--ink-2); }
+.seg button[aria-pressed="true"] { background: var(--accent); color: #fff; }
+.controls select { background: var(--surface); border: 1px solid var(--line); border-radius: 6px; padding: 6px 8px; }
+
+.tbl { overflow-x: auto; border: 1px solid var(--line); border-radius: 8px; background: var(--surface); max-height: 560px; }
+table { border-collapse: collapse; width: 100%; font-size: 13px; }
+th, td { padding: 7px 10px; border-bottom: 1px solid var(--line); text-align: left; white-space: nowrap; }
+th { position: sticky; top: 0; background: var(--surface-2); font: 600 11.5px/1.2 var(--font-cond); letter-spacing: .04em;
+     text-transform: uppercase; color: var(--ink-2); cursor: pointer; user-select: none; }
+th.n, td.n { text-align: right; }
+th[aria-sort="ascending"]::after { content: " ▲"; }
+th[aria-sort="descending"]::after { content: " ▼"; }
+tbody tr:hover td { background: var(--surface-2); }
+.pill { display: inline-flex; gap: 5px; align-items: center; padding: 1px 8px; border-radius: 999px; font-size: 12px; font-weight: 600; }
+.pill.good { color: var(--good-ink); background: color-mix(in srgb, var(--good) 14%, transparent); }
+.pill.warn { color: var(--warn-ink); background: color-mix(in srgb, var(--warn) 20%, transparent); }
+.pill.crit { color: var(--crit-ink); background: color-mix(in srgb, var(--crit) 14%, transparent); }
+.pill.none { color: var(--muted); background: var(--surface-2); }
+
+/* importar */
+.drop { border: 2px dashed var(--axis); border-radius: 10px; padding: 28px 18px; text-align: center; background: var(--surface);
+        display: grid; gap: 8px; justify-items: center; cursor: pointer; }
+.drop.over { border-color: var(--accent); background: color-mix(in srgb, var(--accent) 6%, var(--surface)); }
+.drop strong { font-size: 16px; }
+.drop p { margin: 0; color: var(--ink-2); max-width: 60ch; }
+.opts { display: flex; gap: 16px; flex-wrap: wrap; align-items: end; }
+.opts .field { max-width: 260px; }
+.opts input[type=month] { background: var(--surface); border: 1px solid var(--line); border-radius: 6px; padding: 6px 8px; }
+.log { display: grid; gap: 6px; }
+.msg { padding: 9px 12px; border-radius: 7px; font-size: 13.5px; border: 1px solid var(--line); background: var(--surface); }
+.msg.ok { border-left: 4px solid var(--good); }
+.msg.err { border-left: 4px solid var(--crit); }
+.msg.info { border-left: 4px solid var(--warn); }
+.steps { margin: 0; padding-left: 20px; color: var(--ink-2); display: grid; gap: 4px; max-width: 75ch; }
+.empty { color: var(--muted); padding: 24px; text-align: center; }
+
+#tip { position: fixed; z-index: 20; pointer-events: none; background: var(--surface); color: var(--ink); border: 1px solid var(--line);
+       box-shadow: 0 4px 16px rgba(0,0,0,.12); border-radius: 7px; padding: 8px 10px; font-size: 12.5px; line-height: 1.5;
+       max-width: 280px; }
+#tip b { font-weight: 600; }
+#tip .k { color: var(--muted); }
+
+@media (max-width: 560px) {
+  .wrap, .top-in { padding-inline: 16px; }
+  .kpis { grid-template-columns: 1fr; }
+  .kpi.hero { grid-column: span 1; }
+  .grid2 { grid-template-columns: 1fr; }
+  .hrow { grid-template-columns: 96px 1fr 52px; }
+  .field { max-width: none; }
+}
+@media (prefers-reduced-motion: no-preference) {
+  .track .b, .meter i { transition: width .25s ease; }
+}
+</style>
+
+<header class="top">
+  <div class="top-in">
+    <div class="brand">
+      <h1>Vendas x Metas</h1>
+      <span class="sub" id="sub">Demonstrativo Mensal das Vendas + Resumo Geral das Metas</span>
+    </div>
+    <div class="filters">
+      <div class="field"><label for="f-periodo">Período</label><select id="f-periodo"></select></div>
+      <div class="field"><label for="f-gerente">Gerente</label><select id="f-gerente"></select></div>
+      <div class="field"><label for="f-supervisor">Supervisor</label><select id="f-supervisor"></select></div>
+      <div class="field"><label for="f-vendedor">Vendedor</label><select id="f-vendedor"></select></div>
+    </div>
+    <nav class="tabs" role="tablist">
+      <button class="tab" role="tab" data-tab="geral" aria-selected="true">Visão geral</button>
+      <button class="tab" role="tab" data-tab="metas" aria-selected="false">Metas</button>
+      <button class="tab" role="tab" data-tab="vendas" aria-selected="false">Vendas</button>
+      <button class="tab" role="tab" data-tab="importar" aria-selected="false">Importar planilhas</button>
+      <button class="tab" role="tab" data-tab="base" aria-selected="false">Base de dados</button>
+    </nav>
+  </div>
+</header>
+
+<main class="wrap">
+  <div class="banner" id="banner" hidden>
+    <span><b>Dados de exemplo.</b> Os números abaixo são fictícios. Importe o Demonstrativo e o Resumo de Metas para ver os seus.</span>
+    <button class="btn small" data-goto="importar">Importar planilhas</button>
+  </div>
+  <div class="meta-line" id="meta-line"></div>
+
+  <section class="panel" id="p-geral"></section>
+  <section class="panel" id="p-metas" hidden></section>
+  <section class="panel" id="p-vendas" hidden></section>
+
+  <section class="panel" id="p-importar" hidden>
+    <div class="drop" id="drop" tabindex="0" role="button" aria-label="Escolher planilhas">
+      <strong>Arraste as planilhas aqui ou clique para escolher</strong>
+      <p>Demonstrativo Mensal das Vendas Efetuadas e/ou Resumo Geral das Metas/Vendas, do jeito que saem do Sankhya (.xls, .xlsx ou .csv). O tipo de cada arquivo é reconhecido sozinho.</p>
+      <input type="file" id="file" accept=".xls,.xlsx,.csv" multiple hidden>
+    </div>
+    <div class="opts">
+      <div class="field"><label for="periodo-meta">Mês das metas</label><input type="month" id="periodo-meta"></div>
+      <label style="display:flex;gap:6px;align-items:center"><input type="checkbox" id="forcar"> Reimportar mesmo se o arquivo já foi importado</label>
+    </div>
+    <p class="hint" style="margin:0;color:var(--muted);max-width:75ch">O resumo de metas não traz o mês. Se o campo acima ficar vazio, vale o mês da data de emissão do relatório. Cada importação substitui o mês correspondente, então pode reenviar durante o mês quantas vezes quiser.</p>
+    <div class="log" id="log"></div>
+    <div class="card" id="conc-card"></div>
+  </section>
+
+  <section class="panel" id="p-base" hidden></section>
+</main>
+<div id="tip" hidden></div>
+
+<script>
+"use strict";
+/* =====================================================================
+   Layouts dos relatórios -> colunas da base (nomes do dicionário Sankhya)
+   ===================================================================== */
+const LAYOUTS = {
+  vendas: {
+    titulo: "Demonstrativo Mensal das Vendas Efetuadas",
+    obrigatorias: ["Nº Único Nota", "Cód.Produto", "Data Mvto", "Valor Total Produto"],
+    chave: "Nº Único Nota",
+    colunas: {
+      "Perfil Principal": ["perfil", "s"], "Região": ["regiao", "s"], "Nota Fiscal": ["numnota", "i"],
+      "Gerente": ["gerente", "s"], "Empresa": ["codemp", "i"], "Supervisor": ["supervisor", "s"],
+      "Vendedor": ["vendedor", "s"], "Cód. Cliente": ["codparc", "i"], "Cliente": ["nomeparc", "s"],
+      "Cidade": ["cidade", "s"], "Uf": ["uf", "s"], "Cód.Produto": ["codprod", "i"],
+      "Descrição Produto": ["descrprod", "s"], "Cód.Conta": ["codgrupoprod", "i"], "Conta Estoque": ["grupoprod", "s"],
+      "Qtde Kg": ["qtd_kg", "f"], "Valor Total Produto": ["vlrtot", "f"], "Data Mvto": ["dtmov", "d"],
+      "Valor Total Com ST": ["vlrtot_st", "f"], "Valor ST": ["vlrsubst", "f"], "Linha": ["linha", "s"],
+      "TOP": ["codtipoper", "i"], "Nome da TOP": ["descroper", "s"], "Nome Família": ["familia", "s"],
+      "Operação": ["operacao", "s"], "Cód Mix Comercial": ["codmix_comercial", "i"], "Mix Comercial": ["mix_comercial", "s"],
+      "Cód Mix Bíblia": ["codmix_biblia", "i"], "Mix Bíblia": ["mix_biblia", "s"], "Cód. Rede": ["codrede", "i"],
+      "Cód. Vendedor": ["codvend", "i"], "Nº CTE": ["nucte", "i"], "Nº Único Nota": ["nunota", "i"],
+      "Rede": ["rede", "s"], "Região País": ["regiao_pais", "s"], "Ref. RVV": ["ref_rvv", "s"],
+    },
+  },
+  metas: {
+    titulo: "RESUMO GERAL DAS METAS/VENDAS",
+    obrigatorias: ["Vendedor", "Cód.", "Meta", "Vendido"],
+    chave: "Vendedor",
+    colunas: {
+      "Vendedor Ativo?": ["vendedor_ativo", "s"], "Gerente": ["gerente", "s"], "Supervisor": ["supervisor", "s"],
+      "Região": ["regiao", "s"], "Vendedor": ["vendedor", "s"], "Categoria": ["categoria", "s"],
+      "Cód.": ["codprod", "i"], "Produto": ["descrprod", "s"], "Vendido": ["qtd_vendida", "f"],
+      "Meta": ["qtd_meta", "f"], "Fechado": ["qtd_fechada", "f"], "Valor Fechado": ["vlr_fechado", "f"],
+      "P.M. Meta": ["pm_meta", "f"], "Valor Faturado": ["vlr_faturado", "f"],
+    },
+  },
+};
+const NOME_TIPO = { vendas: "Demonstrativo de vendas", metas: "Resumo de metas" };
+
+/* ===================================================================== formatação */
+const nf = (c = 0) => new Intl.NumberFormat("pt-BR", { minimumFractionDigits: c, maximumFractionDigits: c });
+const F0 = nf(0), F1 = nf(1), F2 = nf(2);
+const num = (v, c = 0) => v == null || !isFinite(v) ? "–" : (c === 0 ? F0 : c === 1 ? F1 : F2).format(v);
+const brl = (v, c = 0) => v == null || !isFinite(v) ? "–" : "R$ " + num(v, c);
+const brlC = v => v == null || !isFinite(v) ? "–" : Math.abs(v) >= 1e6 ? "R$ " + num(v / 1e6, 2) + " mi"
+  : Math.abs(v) >= 1e4 ? "R$ " + num(v / 1e3, 1) + " mil" : brl(v);
+const ton = kg => kg == null || !isFinite(kg) ? "–" : num(kg / 1000, 1) + " t";
+const pct = (v, c = 1) => v == null || !isFinite(v) ? "–" : num(v * 100, c) + "%";
+const esc = s => String(s ?? "").replace(/[&<>"]/g, c => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;" }[c]));
+const perLabel = p => p.slice(5) + "/" + p.slice(0, 4);
+const ddmm = iso => iso.slice(8, 10) + "/" + iso.slice(5, 7);
+const div = (a, b) => b ? a / b : null;
+
+/* ===================================================================== armazenamento (IndexedDB) */
+const Store = {
+  db: null,
+  async open() {
+    try {
+      this.db = await new Promise((ok, fail) => {
+        const r = indexedDB.open("vendas-metas", 1);
+        r.onupgradeneeded = () => r.result.createObjectStore("kv");
+        r.onsuccess = () => ok(r.result); r.onerror = () => fail(r.error);
+      });
+    } catch (e) { this.db = null; }
+  },
+  async get(k) {
+    if (!this.db) return undefined;
+    try { return await new Promise((ok, fail) => { const r = this.db.transaction("kv").objectStore("kv").get(k); r.onsuccess = () => ok(r.result); r.onerror = () => fail(r.error); }); }
+    catch (e) { return undefined; }
+  },
+  async set(k, v) {
+    if (!this.db) return false;
+    try { await new Promise((ok, fail) => { const t = this.db.transaction("kv", "readwrite"); t.objectStore("kv").put(v, k); t.oncomplete = ok; t.onerror = () => fail(t.error); }); return true; }
+    catch (e) { return false; }
+  },
+};
+
+/* Base: { vendas: {periodo: [linhas]}, metas: {periodo: [linhas]}, cargas: [] } */
+let BASE = { vendas: {}, metas: {}, cargas: [] };
+let EXEMPLO = false;
+let PERSISTE = true;
+
+/* ===================================================================== leitura das planilhas */
+function converter(v, t) {
+  if (v == null || v === "") return t === "f" ? 0 : null;
+  if (t === "s") { const s = String(v).trim(); return s === "" ? null : s; }
+  if (t === "d") {
+    if (v instanceof Date) return v.toISOString().slice(0, 10);
+    if (typeof v === "number") { const d = new Date(Math.round((v - 25569) * 864e5)); return d.toISOString().slice(0, 10); }
+    const m = String(v).trim().match(/^(\d{2})\/(\d{2})\/(\d{4})/);
+    if (m) return `${m[3]}-${m[2]}-${m[1]}`;
+    const iso = String(v).trim().match(/^\d{4}-\d{2}-\d{2}/);
+    return iso ? iso[0] : null;
+  }
+  let n = typeof v === "number" ? v : Number(String(v).trim().replace(/\.(?=\d{3}(\D|$))/g, "").replace(",", "."));
+  if (!isFinite(n)) return t === "f" ? 0 : null;
+  return t === "i" ? Math.round(n) : n;
+}
+
+function lerRelatorio(linhas, periodoMeta) {
+  let tipo = null, iCab = -1;
+  for (let i = 0; i < Math.min(15, linhas.length) && !tipo; i++) {
+    const vals = new Set((linhas[i] || []).map(v => v == null ? "" : String(v).trim()));
+    for (const [t, L] of Object.entries(LAYOUTS)) if (L.obrigatorias.every(c => vals.has(c))) { tipo = t; iCab = i; break; }
+  }
+  if (!tipo) throw new Error("Planilha não reconhecida. Envie o 'Demonstrativo Mensal das Vendas Efetuadas' ou o 'Resumo Geral das Metas/Vendas' como exportados do sistema.");
+  const L = LAYOUTS[tipo];
+  const topo = linhas.slice(0, iCab).flat().filter(v => v != null).join(" ");
+  let emitido = null, usuario = null, total = null, m;
+  if ((m = topo.match(/Emiss[aã]o:\s*(\d{2})\/(\d{2})\/(\d{4})(?:\s+(\d{2}:\d{2}:\d{2}))?/))) emitido = `${m[3]}-${m[2]}-${m[1]}${m[4] ? " " + m[4] : ""}`;
+  if ((m = topo.match(/Usu[aá]rio:\s*(.+?)\s*$/))) usuario = m[1];
+  if ((m = topo.match(/Total de registros:\s*(\d+)/))) total = +m[1];
+
+  const cab = (linhas[iCab] || []).map(v => v == null ? "" : String(v).trim());
+  const faltando = Object.keys(L.colunas).filter(c => !cab.includes(c));
+  if (faltando.length) throw new Error(`Faltam colunas no ${NOME_TIPO[tipo].toLowerCase()}: ${faltando.join(", ")}.`);
+  const idx = Object.fromEntries(cab.map((c, i) => [c, i]));
+  const iChave = idx[L.chave];
+
+  if (tipo === "metas") {
+    if (!periodoMeta) {
+      if (!emitido) throw new Error("Informe o mês das metas: o relatório não tem data de emissão.");
+      periodoMeta = emitido.slice(0, 7);
+    }
+  }
+  const dados = [];
+  for (let r = iCab + 1; r < linhas.length; r++) {
+    const lin = linhas[r] || [];
+    const k = lin[iChave];
+    if (k == null || String(k).trim() === "") continue;   // rodapé de totais / linhas vazias
+    const o = {};
+    for (const [col, [dest, t]] of Object.entries(L.colunas)) o[dest] = converter(lin[idx[col]], t);
+    const reg = String(o.regiao ?? "");
+    const mm = reg.match(/^\s*(\d+)\s*-\s*(.+)$/);
+    o.codreg = mm ? +mm[1] : null; o.nomereg = mm ? mm[2].trim() : (reg || null);
+    delete o.regiao;
+    o.periodo = tipo === "vendas" ? (o.dtmov || "").slice(0, 7) : periodoMeta;
+    if (tipo === "vendas" && !o.dtmov) continue;
+    dados.push(o);
+  }
+  if (!dados.length) throw new Error("Nenhuma linha de dados encontrada no relatório.");
+  const avisos = [];
+  if (total != null && total !== dados.length) avisos.push(`O relatório informa ${num(total)} registros e foram lidos ${num(dados.length)}.`);
+  return { tipo, dados, emitido, usuario, avisos };
+}
+
+async function hashDe(buf) {
+  try { const h = await crypto.subtle.digest("SHA-256", buf); return [...new Uint8Array(h)].map(b => b.toString(16).padStart(2, "0")).join(""); }
+  catch (e) { let h = 0; const u = new Uint8Array(buf); for (let i = 0; i < u.length; i += 7) h = (h * 31 + u[i]) | 0; return "x" + h + "-" + u.length; }
+}
+
+function resolverCodvend() {
+  const mapa = new Map();
+  for (const rows of Object.values(BASE.vendas)) for (const v of rows) if (v.codvend != null && !mapa.has(v.vendedor)) mapa.set(v.vendedor, v.codvend);
+  for (const rows of Object.values(BASE.metas)) for (const m of rows) if (m.codvend == null) m.codvend = mapa.get(m.vendedor) ?? null;
+}
+
+async function importarArquivo(file, periodoMeta, forcar) {
+  if (typeof XLSX === "undefined") throw new Error("Não foi possível carregar o leitor de planilhas (SheetJS). Verifique a conexão com a internet e recarregue a página.");
+  const buf = await file.arrayBuffer();
+  const sha = await hashDe(buf);
+  const wb = XLSX.read(buf, { type: "array", raw: false, cellDates: false });
+  const ws = wb.Sheets[wb.SheetNames[0]];
+  const linhas = XLSX.utils.sheet_to_json(ws, { header: 1, raw: true, defval: null, blankrows: false });
+  const rel = lerRelatorio(linhas, periodoMeta);
+  const periodos = [...new Set(rel.dados.map(d => d.periodo))].sort();
+
+  if (EXEMPLO) { BASE = { vendas: {}, metas: {}, cargas: [] }; EXEMPLO = false; }
+  if (!forcar) {
+    const ja = [...BASE.cargas].reverse().find(c => c.tipo === rel.tipo && c.periodos.join() === periodos.join());
+    if (ja && ja.sha256 === sha) return { ...rel, periodos, ignorada: true, substituidas: 0 };
+  }
+  let substituidas = 0;
+  for (const p of periodos) { substituidas += (BASE[rel.tipo][p] || []).length; BASE[rel.tipo][p] = []; }
+  for (const d of rel.dados) BASE[rel.tipo][d.periodo].push(d);
+  BASE.cargas.push({
+    id: (BASE.cargas.at(-1)?.id || 0) + 1, tipo: rel.tipo, origem: "planilha", arquivo: file.name, sha256: sha,
+    periodos, linhas: rel.dados.length, emitido_em: rel.emitido, usuario_relatorio: rel.usuario,
+    importado_em: new Date().toLocaleString("pt-BR"),
+  });
+  resolverCodvend();
+  PERSISTE = await Store.set("base", BASE);
+  return { ...rel, periodos, ignorada: false, substituidas };
+}
+
+/* ===================================================================== consultas */
+const REAL = op => op === "V" || op === "D";   // realizado = vendas - devoluções (bonificação fora)
+const F = { periodo: null, gerente: "", supervisor: "", vendedor: "" };
+const passa = r => (!F.gerente || r.gerente === F.gerente) && (!F.supervisor || r.supervisor === F.supervisor) && (!F.vendedor || r.vendedor === F.vendedor);
+const vendas = () => (BASE.vendas[F.periodo] || []).filter(passa);
+const metas = () => (BASE.metas[F.periodo] || []).filter(passa);
+const periodos = () => [...new Set([...Object.keys(BASE.vendas), ...Object.keys(BASE.metas)])].filter(p => (BASE.vendas[p]?.length || BASE.metas[p]?.length)).sort().reverse();
+
+function indicadores() {
+  const k = { faturado: 0, kg: 0, devolucao: 0, bruta: 0, bonif: 0, ultima: null, meta_kg: 0, meta_valor: 0, vend_kg: 0, vend_valor: 0, cart_kg: 0, cart_valor: 0 };
+  const cli = new Set(), notas = new Set();
+  for (const v of vendas()) {
+    if (REAL(v.operacao)) { k.faturado += v.vlrtot; k.kg += v.qtd_kg; }
+    if (v.operacao === "D") k.devolucao -= v.vlrtot;
+    if (v.operacao === "V") { k.bruta += v.vlrtot; cli.add(v.codparc); notas.add(v.nunota); }
+    if (v.operacao === "B") k.bonif -= v.vlrtot;
+    if (!k.ultima || v.dtmov > k.ultima) k.ultima = v.dtmov;
+  }
+  const ms = metas();
+  for (const m of ms) {
+    k.meta_kg += m.qtd_meta; k.meta_valor += m.qtd_meta * m.pm_meta; k.vend_kg += m.qtd_vendida;
+    k.vend_valor += m.vlr_faturado; k.cart_kg += m.qtd_fechada; k.cart_valor += m.vlr_fechado;
+  }
+  Object.assign(k, {
+    clientes: cli.size, notas: notas.size, tem_meta: ms.length > 0,
+    perc_dev: div(k.devolucao, k.bruta), ticket: div(k.bruta, notas.size), preco: div(k.faturado, k.kg),
+    perc_kg: div(k.vend_kg, k.meta_kg), perc_valor: div(k.vend_valor, k.meta_valor), perc_prev: div(k.vend_kg + k.cart_kg, k.meta_kg),
+  });
+  return k;
+}
+
+function ritmoEsperado(periodo, ultima) {
+  // fração dos dias úteis (seg–sáb) do mês já decorrida até a última venda
+  const [a, m] = periodo.split("-").map(Number);
+  const fim = new Date(Date.UTC(a, m, 0)).getUTCDate();
+  let total = 0, feitos = 0;
+  for (let d = 1; d <= fim; d++) {
+    const dt = new Date(Date.UTC(a, m - 1, d));
+    if (dt.getUTCDay() === 0) continue;
+    total++;
+    if (ultima && dt.toISOString().slice(0, 10) <= ultima) feitos++;
+  }
+  return total ? feitos / total : 0;
+}
+
+function agrupar(rows, chave, init, add) {
+  const g = new Map();
+  for (const r of rows) { const k = r[chave] ?? "(vazio)"; if (!g.has(k)) g.set(k, init(k)); add(g.get(k), r); }
+  return [...g.values()];
+}
+
+function metaPor(dim) {
+  return agrupar(metas(), dim, k => ({ grupo: k, meta_kg: 0, vend_kg: 0, cart_kg: 0, meta_valor: 0, vend_valor: 0, cart_valor: 0 }),
+    (a, m) => { a.meta_kg += m.qtd_meta; a.vend_kg += m.qtd_vendida; a.cart_kg += m.qtd_fechada; a.meta_valor += m.qtd_meta * m.pm_meta; a.vend_valor += m.vlr_faturado; a.cart_valor += m.vlr_fechado; })
+    .map(a => ({ ...a, perc: a.meta_kg > 0 ? a.vend_kg / a.meta_kg : null, prev: a.meta_kg > 0 ? (a.vend_kg + a.cart_kg) / a.meta_kg : null, perc_valor: a.meta_valor > 0 ? a.vend_valor / a.meta_valor : null }))
+    .sort((x, y) => y.meta_kg - x.meta_kg);
+}
+
+function vendasPor(dim) {
+  return agrupar(vendas(), dim, k => ({ grupo: k, faturado: 0, kg: 0, devolucao: 0, cli: new Set(), notas: new Set() }),
+    (a, v) => { if (REAL(v.operacao)) { a.faturado += v.vlrtot; a.kg += v.qtd_kg; } if (v.operacao === "D") a.devolucao -= v.vlrtot; if (v.operacao === "V") { a.cli.add(v.codparc); a.notas.add(v.nunota); } })
+    .map(a => ({ grupo: a.grupo, faturado: a.faturado, kg: a.kg, devolucao: a.devolucao, clientes: a.cli.size, notas: a.notas.size, preco: div(a.faturado, a.kg) }))
+    .sort((x, y) => y.faturado - x.faturado);
+}
+
+function diarias() {
+  const g = new Map();
+  for (const v of vendas()) if (REAL(v.operacao)) g.set(v.dtmov, (g.get(v.dtmov) || 0) + v.vlrtot);
+  return [...g.entries()].sort().map(([data, valor]) => ({ data, valor }));
+}
+
+function conciliacao(periodo) {
+  const v = new Map(), m = new Map();
+  for (const r of BASE.vendas[periodo] || []) if (REAL(r.operacao)) {
+    const k = r.codreg + "|" + r.codprod, a = v.get(k) || { kg: 0, valor: 0 }; a.kg += r.qtd_kg; a.valor += r.vlrtot; v.set(k, a);
+  }
+  for (const r of BASE.metas[periodo] || []) {
+    const k = r.codreg + "|" + r.codprod, a = m.get(k) || { regiao: r.nomereg, produto: r.descrprod, kg: 0, valor: 0 }; a.kg += r.qtd_vendida; a.valor += r.vlr_faturado; m.set(k, a);
+  }
+  const out = [];
+  for (const [k, a] of m) {
+    const b = v.get(k) || { kg: 0, valor: 0 };
+    if (Math.abs(a.kg - b.kg) > 0.01 || Math.abs(a.valor - b.valor) > 0.05)
+      out.push({ regiao: a.regiao, produto: a.produto, kg_resumo: a.kg, kg_demo: b.kg, dif_kg: a.kg - b.kg, valor_resumo: a.valor, valor_demo: b.valor, dif_valor: a.valor - b.valor });
+  }
+  return out.sort((x, y) => Math.abs(y.dif_valor) - Math.abs(x.dif_valor));
+}
+
+/* ===================================================================== tooltip */
+const tip = document.getElementById("tip");
+function showTip(html, ev) {
+  tip.innerHTML = html; tip.hidden = false;
+  const w = tip.offsetWidth, h = tip.offsetHeight;
+  let x = ev.clientX + 14, y = ev.clientY + 14;
+  if (x + w > innerWidth - 8) x = ev.clientX - w - 14;
+  if (y + h > innerHeight - 8) y = ev.clientY - h - 14;
+  tip.style.left = Math.max(8, x) + "px"; tip.style.top = Math.max(8, y) + "px";
+}
+const hideTip = () => { tip.hidden = true; };
+function bindTips(root) {
+  root.querySelectorAll("[data-tip]").forEach(el => {
+    el.addEventListener("mousemove", e => showTip(el.dataset.tip, e));
+    el.addEventListener("mouseleave", hideTip);
+  });
+}
+
+/* ===================================================================== gráficos */
+function niceTicks(max, n = 4) {
+  if (!(max > 0)) return [0, 1];
+  const raw = max / n, p = Math.pow(10, Math.floor(Math.log10(raw)));
+  const step = [1, 2, 2.5, 5, 10].map(s => s * p).find(s => s >= raw);
+  const t = []; for (let v = 0; v <= max + step * 0.001; v += step) t.push(v);
+  if (t.at(-1) < max) t.push(t.at(-1) + step);
+  return t;
+}
+const eixo = v => Math.abs(v) >= 1e6 ? num(v / 1e6, v % 1e6 ? 1 : 0) + " mi" : Math.abs(v) >= 1e3 ? num(v / 1e3, 0) + " mil" : num(v);
+
+function svgBarrasDiarias(d) {
+  if (!d.length) return `<div class="empty">Sem vendas no período.</div>`;
+  const W = 640, H = 250, pl = 52, pr = 8, pt = 10, pb = 26;
+  const ticks = niceTicks(Math.max(...d.map(x => x.valor), 0));
+  const ymax = ticks.at(-1), iw = W - pl - pr, ih = H - pt - pb;
+  const bw = iw / d.length, gap = Math.min(4, bw * 0.3);
+  const y = v => pt + ih - (Math.max(v, 0) / ymax) * ih;
+  const every = Math.ceil(d.length / 8);
+  let s = `<svg viewBox="0 0 ${W} ${H}" role="img" aria-label="Faturamento por dia">`;
+  for (const t of ticks) s += `<line x1="${pl}" x2="${W - pr}" y1="${y(t)}" y2="${y(t)}" stroke="var(--grid)"/><text x="${pl - 6}" y="${y(t) + 4}" text-anchor="end">${eixo(t)}</text>`;
+  d.forEach((p, i) => {
+    const x = pl + i * bw + gap / 2, w = Math.max(bw - gap, 1), yy = y(p.valor), h = pt + ih - yy, r = Math.min(4, w / 2, h);
+    const path = h > 0 ? `M${x},${pt + ih} V${yy + r} Q${x},${yy} ${x + r},${yy} H${x + w - r} Q${x + w},${yy} ${x + w},${yy + r} V${pt + ih} Z` : "";
+    s += `<g data-tip="<b>${ddmm(p.data)}</b><br>${brl(p.valor, 2)}"><rect x="${pl + i * bw}" y="${pt}" width="${bw}" height="${ih}" fill="transparent"/>${path ? `<path d="${path}" fill="var(--accent)"/>` : ""}</g>`;
+    if (i % every === 0) s += `<text x="${x + w / 2}" y="${H - 8}" text-anchor="middle">${ddmm(p.data)}</text>`;
+  });
+  s += `<line x1="${pl}" x2="${W - pr}" y1="${pt + ih}" y2="${pt + ih}" stroke="var(--axis)"/></svg>`;
+  return s;
+}
+
+function svgAcumulado(d, meta) {
+  if (!d.length) return `<div class="empty">Sem vendas no período.</div>`;
+  const W = 640, H = 250, pl = 52, pr = 12, pt = 18, pb = 26;
+  let acc = 0; const pts = d.map(p => ({ data: p.data, v: (acc += p.valor) }));
+  const ticks = niceTicks(Math.max(acc, meta || 0));
+  const ymax = ticks.at(-1), iw = W - pl - pr, ih = H - pt - pb;
+  const x = i => pl + (pts.length === 1 ? iw / 2 : (i / (pts.length - 1)) * iw);
+  const y = v => pt + ih - (v / ymax) * ih;
+  const every = Math.ceil(pts.length / 8);
+  let s = `<svg viewBox="0 0 ${W} ${H}" role="img" aria-label="Faturamento acumulado contra a meta">`;
+  for (const t of ticks) s += `<line x1="${pl}" x2="${W - pr}" y1="${y(t)}" y2="${y(t)}" stroke="var(--grid)"/><text x="${pl - 6}" y="${y(t) + 4}" text-anchor="end">${eixo(t)}</text>`;
+  if (meta) s += `<line x1="${pl}" x2="${W - pr}" y1="${y(meta)}" y2="${y(meta)}" stroke="var(--ink)" stroke-width="1.5" stroke-dasharray="6 4"/><text x="${W - pr}" y="${y(meta) - 6}" text-anchor="end" style="fill:var(--ink-2)">Meta ${brlC(meta)}</text>`;
+  const line = pts.map((p, i) => `${i ? "L" : "M"}${x(i)},${y(p.v)}`).join(" ");
+  s += `<path d="${line} L${x(pts.length - 1)},${pt + ih} L${x(0)},${pt + ih} Z" fill="var(--accent)" opacity=".08"/>`;
+  s += `<path d="${line}" fill="none" stroke="var(--accent)" stroke-width="2" stroke-linejoin="round"/>`;
+  pts.forEach((p, i) => {
+    const last = i === pts.length - 1;
+    s += `<g data-tip="<b>${ddmm(p.data)}</b><br>Acumulado: ${brl(p.v)}${meta ? `<br><span class=k>${pct(p.v / meta)} da meta</span>` : ""}">
+      <rect x="${x(i) - iw / pts.length / 2}" y="${pt}" width="${iw / pts.length}" height="${ih}" fill="transparent"/>
+      <circle cx="${x(i)}" cy="${y(p.v)}" r="${last ? 5 : 3.5}" fill="var(--accent)" stroke="var(--surface)" stroke-width="2"/></g>`;
+    if (i % every === 0) s += `<text x="${x(i)}" y="${H - 8}" text-anchor="middle">${ddmm(p.data)}</text>`;
+  });
+  s += `<text x="${x(pts.length - 1) - 8}" y="${y(acc) - 10}" text-anchor="end" style="fill:var(--ink);font-weight:600">${brlC(acc)}</text>`;
+  s += `<line x1="${pl}" x2="${W - pr}" y1="${pt + ih}" y2="${pt + ih}" stroke="var(--axis)"/></svg>`;
+  return s;
+}
+
+function bullet(rows, limite = 40) {
+  rows = rows.filter(r => r.meta_kg > 0).slice(0, limite).sort((a, b) => (b.perc ?? 0) - (a.perc ?? 0));
+  if (!rows.length) return `<div class="empty">Sem metas no período. Importe o Resumo Geral das Metas/Vendas.</div>`;
+  const max = Math.max(...rows.map(r => Math.max(r.meta_kg, r.vend_kg + Math.max(r.cart_kg, 0))));
+  const p = v => Math.max(0, (v / max) * 100);
+  return `<div class="legend"><span><i class="sw" style="background:var(--accent)"></i>Vendido</span><span><i class="sw" style="background:var(--accent-soft)"></i>Carteira (pedidos fechados)</span><span><i class="sw tick"></i>Meta</span><span style="margin-left:auto;color:var(--muted)">% vendido ÷ meta, em kg</span></div>
+  <div class="hbars">${rows.map(r => `<div class="hrow" data-tip="<b>${esc(r.grupo)}</b><br>Meta: ${num(r.meta_kg)} kg<br>Vendido: ${num(r.vend_kg)} kg (${pct(r.perc)})<br>Carteira: ${num(r.cart_kg)} kg<br><span class=k>Com carteira: ${pct(r.prev)}</span><br>Faturado: ${brl(r.vend_valor)} de ${brl(r.meta_valor)}">
+    <span class="lab" title="${esc(r.grupo)}">${esc(r.grupo)}</span>
+    <span class="track"><span class="b c" style="width:${p(r.vend_kg + Math.max(r.cart_kg, 0))}%"></span><span class="b v" style="width:${p(r.vend_kg)}%"></span><span class="t" style="left:${p(r.meta_kg)}%"></span></span>
+    <span class="val">${pct(r.perc, 0)}</span></div>`).join("")}</div>`;
+}
+
+function ranking(rows, n) {
+  rows = rows.slice(0, n);
+  if (!rows.length) return `<div class="empty">Sem vendas no período.</div>`;
+  const max = Math.max(...rows.map(r => r.faturado), 1);
+  return `<div class="hbars">${rows.map(r => `<div class="hrow" data-tip="<b>${esc(r.grupo)}</b><br>${brl(r.faturado, 2)}<br>${num(r.kg)} kg · ${num(r.clientes)} clientes<br><span class=k>Preço médio ${brl(r.preco, 2)}/kg</span>">
+    <span class="lab" title="${esc(r.grupo)}">${esc(r.grupo)}</span>
+    <span class="track"><span class="b v" style="width:${Math.max(0, r.faturado / max * 100)}%"></span></span>
+    <span class="val">${brlC(r.faturado).replace("R$ ", "")}</span></div>`).join("")}</div>`;
+}
+
+/* ===================================================================== tabela ordenável */
+function tabela(el, colunas, linhas, ordem) {
+  let sortKey = ordem?.[0] ?? null, dir = ordem?.[1] ?? -1;
+  const draw = () => {
+    const rows = sortKey == null ? linhas : [...linhas].sort((a, b) => {
+      const x = a[sortKey], y = b[sortKey];
+      if (x == null) return 1; if (y == null) return -1;
+      return (typeof x === "number" ? x - y : String(x).localeCompare(String(y), "pt-BR")) * dir;
+    });
+    el.innerHTML = `<table><thead><tr>${colunas.map(c => `<th class="${c.n ? "n" : ""}" data-k="${c.k}" aria-sort="${c.k === sortKey ? (dir > 0 ? "ascending" : "descending") : "none"}">${c.t}</th>`).join("")}</tr></thead>
+      <tbody>${rows.length ? rows.map(r => `<tr>${colunas.map(c => `<td class="${c.n ? "n" : ""}">${c.f ? c.f(r[c.k], r) : esc(r[c.k])}</td>`).join("")}</tr>`).join("") : `<tr><td colspan="${colunas.length}" class="empty">Nada para mostrar.</td></tr>`}</tbody></table>`;
+    el.querySelectorAll("th").forEach(th => th.onclick = () => { const k = th.dataset.k; dir = k === sortKey ? -dir : -1; sortKey = k; draw(); });
+  };
+  draw();
+}
+
+/* ===================================================================== telas */
+const $ = id => document.getElementById(id);
+let ESPERADO = 0;
+const STATUS = {
+  good: ["✔", "Atingiu"], warn: ["▲", "No ritmo"], crit: ["✖", "Abaixo do ritmo"], none: ["–", "Sem meta"],
+};
+const situacao = perc => perc == null ? "none" : perc >= 1 ? "good" : perc >= ESPERADO * 0.9 ? "warn" : "crit";
+const pill = s => `<span class="pill ${s}">${STATUS[s][0]} ${STATUS[s][1]}</span>`;
+
+function kpi(l, v, d = "", cls = "", extra = "") {
+  return `<div class="kpi ${cls}"><span class="l">${l}</span><span class="v num">${v}</span>${extra}${d ? `<span class="d">${d}</span>` : ""}</div>`;
+}
+
+function telaGeral() {
+  const k = indicadores();
+  ESPERADO = ritmoEsperado(F.periodo, k.ultima);
+  $("meta-line").innerHTML = `Movimento até <b>${k.ultima ? k.ultima.split("-").reverse().join("/") : "–"}</b> · ${pct(ESPERADO, 0)} dos dias úteis (seg–sáb) do mês decorridos · realizado = vendas − devoluções`;
+  const meter = (perc, prev) => perc == null ? "" : `<div class="meter"><i class="soft" style="width:${Math.min(100, (prev ?? perc) * 100)}%"></i><i style="width:${Math.min(100, perc * 100)}%"></i><s style="left:${Math.min(100, ESPERADO * 100)}%" title="ritmo esperado"></s></div>`;
+  const st = situacao(k.perc_kg);
+  $("p-geral").innerHTML = `
+    <div class="kpis">
+      ${kpi("Faturado líquido", brlC(k.faturado), `${ton(k.kg)} · preço médio ${brl(k.preco, 2)}/kg`, "hero")}
+      ${kpi("Meta em kg", pct(k.perc_kg), k.tem_meta ? `${pill(st)} ${pct(k.perc_prev)} com carteira` : "sem metas importadas", "", meter(k.perc_kg, k.perc_prev))}
+      ${kpi("Meta em R$", pct(k.perc_valor), k.tem_meta ? `${brlC(k.vend_valor)} de ${brlC(k.meta_valor)}` : "", "", meter(k.perc_valor))}
+      ${kpi("Falta para a meta", k.tem_meta ? brlC(Math.max(k.meta_valor - k.vend_valor, 0)) : "–", k.tem_meta ? `${ton(Math.max(k.meta_kg - k.vend_kg, 0))} a vender` : "")}
+      ${kpi("Carteira", brlC(k.cart_valor), `${ton(k.cart_kg)} em pedidos fechados`)}
+      ${kpi("Clientes positivados", num(k.clientes), `${num(k.notas)} notas · ticket ${brlC(k.ticket)}`)}
+      ${kpi("Devoluções", brlC(k.devolucao), `${pct(k.perc_dev)} da venda bruta · bonificação ${brlC(k.bonif)} (fora do realizado)`)}
+    </div>
+    <div class="grid2">
+      <div class="card chart"><h3>Faturamento por dia</h3><div class="hint">R$ líquido por data de movimento</div>${svgBarrasDiarias(diarias())}</div>
+      <div class="card chart"><h3>Faturamento acumulado x meta</h3><div class="hint">R$ acumulados no mês; linha tracejada = meta em R$</div>${svgAcumulado(diarias(), k.meta_valor)}</div>
+    </div>
+    <div class="grid2">
+      <div class="card"><h3>Meta por supervisor</h3><div class="hint">Vendido e carteira em kg contra a meta</div>${bullet(metaPor("supervisor"))}</div>
+      <div class="card"><h3>Meta por categoria</h3><div class="hint">Vendido e carteira em kg contra a meta</div>${bullet(metaPor("categoria"))}</div>
+    </div>`;
+  bindTips($("p-geral"));
+}
+
+const DIM_META = { vendedor: "Vendedor", supervisor: "Supervisor", gerente: "Gerente", categoria: "Categoria", descrprod: "Produto", nomereg: "Região" };
+let dimMeta = "vendedor";
+function telaMetas() {
+  const rows = metaPor(dimMeta);
+  $("p-metas").innerHTML = `
+    <div class="controls"><span style="color:var(--muted)">Agrupar por</span><div class="seg">${Object.entries(DIM_META).map(([k, t]) => `<button data-dim="${k}" aria-pressed="${k === dimMeta}">${t}</button>`).join("")}</div></div>
+    <div class="card"><h3>Meta x vendido por ${DIM_META[dimMeta].toLowerCase()}</h3>
+      <div class="hint">${pill("good")} atingiu a meta · ${pill("warn")} dentro do ritmo esperado (${pct(ESPERADO, 0)} do mês) · ${pill("crit")} abaixo do ritmo</div>${bullet(rows, 60)}</div>
+    <div class="tbl" id="t-metas"></div>`;
+  $("p-metas").querySelectorAll("[data-dim]").forEach(b => b.onclick = () => { dimMeta = b.dataset.dim; telaMetas(); });
+  tabela($("t-metas"), [
+    { k: "grupo", t: DIM_META[dimMeta] },
+    { k: "perc", t: "Situação", f: v => pill(situacao(v)) },
+    { k: "meta_kg", t: "Meta kg", n: 1, f: v => num(v) },
+    { k: "vend_kg", t: "Vendido kg", n: 1, f: v => num(v) },
+    { k: "perc", t: "% Meta", n: 1, f: v => pct(v) },
+    { k: "cart_kg", t: "Carteira kg", n: 1, f: v => num(v) },
+    { k: "prev", t: "% c/ carteira", n: 1, f: v => pct(v) },
+    { k: "meta_valor", t: "Meta R$", n: 1, f: v => brl(v) },
+    { k: "vend_valor", t: "Faturado R$", n: 1, f: v => brl(v) },
+    { k: "perc_valor", t: "% Meta R$", n: 1, f: v => pct(v) },
+  ], rows, ["meta_kg", -1]);
+  bindTips($("p-metas"));
+}
+
+const DIM_VENDA = { nomeparc: "Cliente", descrprod: "Produto", vendedor: "Vendedor", supervisor: "Supervisor", uf: "UF", cidade: "Cidade", perfil: "Perfil", rede: "Rede", mix_comercial: "Mix comercial", mix_biblia: "Mix bíblia", linha: "Linha", grupoprod: "Conta estoque", descroper: "TOP" };
+let dimVenda = "nomeparc", topN = 15;
+function telaVendas() {
+  const rows = vendasPor(dimVenda), total = rows.reduce((s, r) => s + r.faturado, 0);
+  rows.forEach(r => r.share = div(r.faturado, total));
+  $("p-vendas").innerHTML = `
+    <div class="controls">
+      <label for="dim-venda" style="color:var(--muted)">Agrupar por</label>
+      <select id="dim-venda">${Object.entries(DIM_VENDA).map(([k, t]) => `<option value="${k}" ${k === dimVenda ? "selected" : ""}>${t}</option>`).join("")}</select>
+      <label for="top-n" style="color:var(--muted)">Mostrar</label>
+      <select id="top-n">${[10, 15, 25, 50].map(n => `<option ${n === topN ? "selected" : ""}>${n}</option>`).join("")}</select>
+    </div>
+    <div class="card"><h3>Faturamento líquido por ${DIM_VENDA[dimVenda].toLowerCase()}</h3><div class="hint">Top ${topN} de ${num(rows.length)} · valores em R$</div>${ranking(rows, topN)}</div>
+    <div class="tbl" id="t-vendas"></div>`;
+  $("dim-venda").onchange = e => { dimVenda = e.target.value; telaVendas(); };
+  $("top-n").onchange = e => { topN = +e.target.value; telaVendas(); };
+  tabela($("t-vendas"), [
+    { k: "grupo", t: DIM_VENDA[dimVenda] },
+    { k: "faturado", t: "Faturado R$", n: 1, f: v => brl(v, 2) },
+    { k: "share", t: "% do total", n: 1, f: v => pct(v) },
+    { k: "kg", t: "Volume kg", n: 1, f: v => num(v, 1) },
+    { k: "preco", t: "R$/kg", n: 1, f: v => brl(v, 2) },
+    { k: "devolucao", t: "Devolução R$", n: 1, f: v => brl(v, 2) },
+    { k: "clientes", t: "Clientes", n: 1, f: v => num(v) },
+    { k: "notas", t: "Notas", n: 1, f: v => num(v) },
+  ], rows, ["faturado", -1]);
+  bindTips($("p-vendas"));
+}
+
+function telaConciliacao() {
+  const el = $("conc-card");
+  if (!F.periodo || !BASE.metas[F.periodo]?.length || !BASE.vendas[F.periodo]?.length) {
+    el.innerHTML = `<h3>Conciliação</h3><div class="hint">Aparece quando os dois relatórios do mesmo mês estiverem na base.</div>`; return;
+  }
+  const rows = conciliacao(F.periodo);
+  el.innerHTML = `<h3>Conciliação ${perLabel(F.periodo)}: resumo de metas x demonstrativo</h3>
+    <div class="hint">${num(rows.length)} itens (região × produto) em que o “Vendido” do resumo difere da soma do demonstrativo. Diferenças pequenas são esperadas quando os relatórios são extraídos em momentos diferentes.</div><div class="tbl" id="t-conc"></div>`;
+  tabela($("t-conc"), [
+    { k: "regiao", t: "Região" }, { k: "produto", t: "Produto" },
+    { k: "kg_resumo", t: "kg resumo", n: 1, f: v => num(v, 1) }, { k: "kg_demo", t: "kg demonstrativo", n: 1, f: v => num(v, 1) },
+    { k: "dif_kg", t: "Dif. kg", n: 1, f: v => num(v, 1) },
+    { k: "valor_resumo", t: "R$ resumo", n: 1, f: v => brl(v, 2) }, { k: "valor_demo", t: "R$ demonstrativo", n: 1, f: v => brl(v, 2) },
+    { k: "dif_valor", t: "Dif. R$", n: 1, f: v => brl(v, 2) },
+  ], rows, null);
+}
+
+function csv(rows) {
+  if (!rows.length) return "";
+  const cols = Object.keys(rows[0]);
+  const cel = v => v == null ? "" : typeof v === "number" ? String(v).replace(".", ",") : /[;"\n]/.test(v) ? `"${String(v).replace(/"/g, '""')}"` : v;
+  return "\ufeff" + cols.join(";") + "\n" + rows.map(r => cols.map(c => cel(r[c])).join(";")).join("\n");
+}
+function baixar(nome, conteudo, tipo) {
+  const a = document.createElement("a");
+  a.href = URL.createObjectURL(new Blob([conteudo], { type: tipo })); a.download = nome;
+  document.body.appendChild(a); a.click(); a.remove();
+}
+
+function telaBase() {
+  const ps = periodos();
+  $("p-base").innerHTML = `
+    <div class="card"><h3>O que está na base</h3><div class="hint">${EXEMPLO ? "Dados de exemplo — nada foi importado ainda." : PERSISTE ? "Guardado neste navegador. Continua aqui quando você reabrir a página." : "Este navegador não permitiu guardar os dados: eles ficam só até fechar a página."}</div>
+      <div class="tbl"><table><thead><tr><th>Período</th><th class="n">Itens de venda</th><th class="n">Linhas de meta</th></tr></thead><tbody>
+      ${ps.map(p => `<tr><td>${perLabel(p)}</td><td class="n">${num(BASE.vendas[p]?.length || 0)}</td><td class="n">${num(BASE.metas[p]?.length || 0)}</td></tr>`).join("") || `<tr><td colspan="3" class="empty">Base vazia.</td></tr>`}
+      </tbody></table></div></div>
+    <div class="card"><h3>Exportar</h3><div class="hint">CSV com as colunas da base (nomes de campo do Sankhya), separado por ponto e vírgula. JSON com a base completa, para levar para outro computador ou para o banco de dados.</div>
+      <div class="controls">
+        <button class="btn ghost small" id="x-vendas" ${F.periodo ? "" : "disabled"}>Vendas ${F.periodo ? perLabel(F.periodo) : ""} (CSV)</button>
+        <button class="btn ghost small" id="x-metas" ${F.periodo ? "" : "disabled"}>Metas ${F.periodo ? perLabel(F.periodo) : ""} (CSV)</button>
+        <button class="btn ghost small" id="x-json">Base completa (JSON)</button>
+        <button class="btn ghost small" id="i-json">Restaurar base (JSON)</button><input type="file" id="i-json-f" accept=".json" hidden>
+        <span style="flex:1"></span>
+        <button class="btn ghost small" id="limpar" style="color:var(--crit-ink)">Apagar base</button>
+      </div>
+      <div id="limpar-ok" hidden style="margin-top:10px" class="msg info">Apagar todos os dados importados deste navegador? <button class="btn small" id="limpar-sim" style="background:var(--crit)">Apagar</button> <button class="btn ghost small" id="limpar-nao">Cancelar</button></div>
+    </div>
+    <div class="card"><h3>Histórico de importações</h3><div class="tbl" id="t-cargas"></div></div>`;
+  tabela($("t-cargas"), [
+    { k: "id", t: "#", n: 1 }, { k: "tipo", t: "Relatório", f: v => NOME_TIPO[v] }, { k: "arquivo", t: "Arquivo" },
+    { k: "periodos", t: "Período", f: v => v.map(perLabel).join(", ") }, { k: "linhas", t: "Linhas", n: 1, f: v => num(v) },
+    { k: "emitido_em", t: "Emitido em" }, { k: "usuario_relatorio", t: "Usuário" }, { k: "importado_em", t: "Importado em" },
+  ], [...BASE.cargas].reverse(), null);
+  const vendasCsv = () => (BASE.vendas[F.periodo] || []), metasCsv = () => (BASE.metas[F.periodo] || []).map(m => ({ ...m, vlr_previsto: m.qtd_meta * m.pm_meta, perc_meta: div(m.qtd_vendida, m.qtd_meta), perc_prev: div(m.qtd_vendida + m.qtd_fechada, m.qtd_meta), previa: m.qtd_meta - m.qtd_vendida - m.qtd_fechada }));
+  $("x-vendas").onclick = () => baixar(`vendas_${F.periodo}.csv`, csv(vendasCsv()), "text/csv");
+  $("x-metas").onclick = () => baixar(`metas_${F.periodo}.csv`, csv(metasCsv()), "text/csv");
+  $("x-json").onclick = () => baixar("base_vendas_metas.json", JSON.stringify(BASE), "application/json");
+  $("i-json").onclick = () => $("i-json-f").click();
+  $("i-json-f").onchange = async e => {
+    const f = e.target.files[0]; if (!f) return;
+    try { const b = JSON.parse(await f.text()); if (!b.vendas || !b.metas || !b.cargas) throw 0; BASE = b; EXEMPLO = false; PERSISTE = await Store.set("base", BASE); iniciarFiltros(); render(); }
+    catch (_) { $("limpar-ok").hidden = false; $("limpar-ok").className = "msg err"; $("limpar-ok").textContent = "Esse arquivo não é uma base exportada por este painel."; }
+  };
+  $("limpar").onclick = () => { $("limpar-ok").hidden = false; };
+  $("limpar-nao").onclick = () => { $("limpar-ok").hidden = true; };
+  $("limpar-sim").onclick = async () => { BASE = { vendas: {}, metas: {}, cargas: [] }; await Store.set("base", BASE); carregarExemplo(); iniciarFiltros(); render(); };
+}
+
+/* ===================================================================== filtros e navegação */
+function opcoes(col) {
+  const s = new Set();
+  for (const r of BASE.vendas[F.periodo] || []) if (r[col]) s.add(r[col]);
+  for (const r of BASE.metas[F.periodo] || []) if (r[col]) s.add(r[col]);
+  return [...s].sort((a, b) => a.localeCompare(b, "pt-BR"));
+}
+function fillSelect(el, valores, atual, rotuloTodos) {
+  el.innerHTML = (rotuloTodos ? `<option value="">${rotuloTodos}</option>` : "") + valores.map(v => `<option value="${esc(v)}">${esc(v.label ?? v)}</option>`).join("");
+  el.value = valores.includes(atual) ? atual : (rotuloTodos ? "" : valores[0] ?? "");
+}
+function iniciarFiltros() {
+  const ps = periodos();
+  if (!ps.includes(F.periodo)) F.periodo = ps[0] || null;
+  $("f-periodo").innerHTML = ps.map(p => `<option value="${p}">${perLabel(p)}</option>`).join("");
+  $("f-periodo").value = F.periodo || "";
+  for (const c of ["gerente", "supervisor", "vendedor"]) {
+    const ops = opcoes(c); if (!ops.includes(F[c])) F[c] = "";
+    fillSelect($("f-" + c), ops, F[c], "Todos");
+  }
+}
+["periodo", "gerente", "supervisor", "vendedor"].forEach(c => $("f-" + c).addEventListener("change", e => {
+  F[c] = e.target.value; if (c === "periodo") iniciarFiltros(); render();
+}));
+
+let aba = "geral";
+function irPara(t) {
+  aba = t;
+  document.querySelectorAll(".tab").forEach(b => b.setAttribute("aria-selected", b.dataset.tab === t));
+  for (const p of ["geral", "metas", "vendas", "importar", "base"]) $("p-" + p).hidden = p !== t;
+  try { localStorage.setItem("vm-aba", t); } catch (_) {}
+  render();
+}
+document.querySelectorAll(".tab").forEach(b => b.onclick = () => irPara(b.dataset.tab));
+document.querySelectorAll("[data-goto]").forEach(b => b.onclick = () => irPara(b.dataset.goto));
+
+function render() {
+  hideTip();
+  $("banner").hidden = !EXEMPLO;
+  const vazio = !F.periodo;
+  if (vazio) { $("meta-line").textContent = ""; }
+  if (!vazio) telaGeral();                    // também calcula o ritmo esperado
+  if (aba === "metas" && !vazio) telaMetas();
+  if (aba === "vendas" && !vazio) telaVendas();
+  if (aba === "importar") telaConciliacao();
+  if (aba === "base") telaBase();
+}
+
+/* ===================================================================== importar (UI) */
+const drop = $("drop"), inp = $("file");
+drop.onclick = () => inp.click();
+drop.onkeydown = e => { if (e.key === "Enter" || e.key === " ") { e.preventDefault(); inp.click(); } };
+drop.ondragover = e => { e.preventDefault(); drop.classList.add("over"); };
+drop.ondragleave = () => drop.classList.remove("over");
+drop.ondrop = e => { e.preventDefault(); drop.classList.remove("over"); processar([...e.dataTransfer.files]); };
+inp.onchange = () => { processar([...inp.files]); inp.value = ""; };
+
+async function processar(files) {
+  const log = $("log");
+  const pm = $("periodo-meta").value || null, forcar = $("forcar").checked;
+  // demonstrativo primeiro, para o resumo de metas achar o código do vendedor
+  files.sort((a, b) => /metas/i.test(a.name) - /metas/i.test(b.name));
+  for (const f of files) {
+    const item = document.createElement("div"); item.className = "msg info"; item.textContent = `Lendo ${f.name}…`; log.prepend(item);
+    await new Promise(r => setTimeout(r, 20));
+    try {
+      const r = await importarArquivo(f, pm, forcar);
+      if (r.ignorada) { item.className = "msg info"; item.innerHTML = `<b>${esc(f.name)}</b>: igual ao último importado para ${r.periodos.map(perLabel).join(", ")}. Nada mudou.`; }
+      else {
+        item.className = "msg ok";
+        item.innerHTML = `<b>${esc(f.name)}</b> → ${NOME_TIPO[r.tipo]} de ${r.periodos.map(perLabel).join(", ")}: ${num(r.dados.length)} linhas gravadas${r.substituidas ? ` (substituíram ${num(r.substituidas)} anteriores)` : ""}.${r.avisos.map(a => `<br>⚠ ${esc(a)}`).join("")}`;
+        F.periodo = r.periodos.at(-1);
+      }
+    } catch (e) {
+      item.className = "msg err"; item.innerHTML = `<b>${esc(f.name)}</b>: ${esc(e.message || e)}`;
+    }
+  }
+  iniciarFiltros(); render();
+}
+
+/* ===================================================================== dados de exemplo (fictícios) */
+function carregarExemplo() {
+  EXEMPLO = true;
+  let seed = 7; const rnd = () => (seed = (seed * 16807) % 2147483647) / 2147483647;
+  const hoje = new Date(), per = `${hoje.getFullYear()}-${String(hoje.getMonth() + 1).padStart(2, "0")}`;
+  const sup = [["MARLUCE", "SUPERVISOR NORTE"], ["MARLUCE", "SUPERVISOR SUL"], ["WILSON", "SUPERVISOR CHAVE"]];
+  const vend = Array.from({ length: 9 }, (_, i) => ({ codvend: 400 + i, vendedor: `VENDEDOR ${String(i + 1).padStart(2, "0")}`, codreg: 101003000 + i, nomereg: `ZV1${String(i).padStart(2, "0")} - EXEMPLO`, gerente: sup[i % 3][0], supervisor: sup[i % 3][1] }));
+  const prods = [["COSTELA CONGELADA", "CONGELADOS AS", 16], ["BISTECA 5KG", "CONGELADOS AS", 17.5], ["PANCETA", "PORCIONADOS - AS", 27], ["LINGUIÇA TOSCANA 5KG", "LINGUIÇAS FRESCAIS", 11.4], ["PRESUNTO", "PRESUNTARIA", 18], ["BACON MANTA", "DEFUMADOS", 24], ["CALABRESA 400G", "LINHA BLACK", 21.5], ["COSTELA SALGADA", "SALGADOS AS", 18.9], ["TORRESMO", "LINHA SNACKS", 145], ["CARRÉ CONGELADO", "CONGELADOS GRANEL", 10.5]]
+    .map(([d, c, p], i) => ({ codprod: 200 + i, descrprod: d, categoria: c, preco: p }));
+  const ufs = [["CUIABA", "MT"], ["RONDONOPOLIS", "MT"], ["SINOP", "MT"], ["GOIANIA", "GO"], ["PORTO VELHO", "RO"], ["CAMPO GRANDE", "MS"]];
+  const perfis = ["VAREJO", "AUTO SERVICO", "ATACADO", "DISTRIBUIDOR"];
+  const clientes = Array.from({ length: 70 }, (_, i) => ({ codparc: 5000 + i, nomeparc: `CLIENTE EXEMPLO ${String(i + 1).padStart(2, "0")}`, cidade: ufs[i % 6][0], uf: ufs[i % 6][1], perfil: perfis[i % 4], rede: i % 5 ? "SEM REDE" : "REDE EXEMPLO" }));
+  const ult = Math.min(hoje.getDate(), 28), vendasEx = [], vendido = new Map();
+  let nunota = 900000;
+  for (let d = 1; d <= ult; d++) {
+    const dt = `${per}-${String(d).padStart(2, "0")}`;
+    if (new Date(dt + "T12:00").getDay() === 0) continue;
+    for (let n = 0; n < 40; n++) {
+      const v = vend[Math.floor(rnd() * vend.length)], c = clientes[Math.floor(rnd() * clientes.length)], p = prods[Math.floor(rnd() * prods.length)];
+      const r = rnd(), op = r < 0.03 ? "D" : r < 0.04 ? "B" : "V", sinal = op === "V" ? 1 : -1;
+      const kg = Math.round((20 + rnd() * 400) * (p.preco > 100 ? 0.02 : 1) * 10) / 10 * sinal;
+      const vl = Math.round(kg * p.preco * (0.95 + rnd() * 0.1) * 100) / 100;
+      vendasEx.push({ periodo: per, dtmov: dt, codemp: 1, nunota: ++nunota, numnota: nunota - 500000, codtipoper: op === "V" ? 500 : op === "D" ? 241 : 501, descroper: op === "V" ? "VENDA PRODUCAO DO ESTABELECIMENTO" : op === "D" ? "DEVOLUCAO DE VENDA" : "SAIDA EM BONIFICACAO", operacao: op, ...c, codrede: null, regiao_pais: "CENTRO-OESTE", codreg: v.codreg, nomereg: v.nomereg, codvend: v.codvend, vendedor: v.vendedor, supervisor: v.supervisor, gerente: v.gerente, codprod: p.codprod, descrprod: p.descrprod, codgrupoprod: null, grupoprod: null, linha: p.categoria, familia: null, codmix_comercial: null, mix_comercial: p.categoria, codmix_biblia: null, mix_biblia: null, qtd_kg: kg, vlrtot: vl, vlrsubst: 0, vlrtot_st: vl, nucte: null, ref_rvv: per.slice(5) + "/" + per.slice(0, 4) });
+      if (op !== "B") { const k = v.codvend + "|" + p.codprod, a = vendido.get(k) || { kg: 0, vl: 0 }; a.kg += kg; a.vl += vl; vendido.set(k, a); }
+    }
+  }
+  const metasEx = [];
+  for (const v of vend) for (const p of prods) {
+    const a = vendido.get(v.codvend + "|" + p.codprod) || { kg: 0, vl: 0 };
+    const meta = Math.round((a.kg / Math.max(ult / 30, 0.1)) * (0.7 + rnd() * 0.6) / 10) * 10;
+    const fech = Math.round(meta * rnd() * 0.15);
+    metasEx.push({ periodo: per, vendedor_ativo: "Sim", gerente: v.gerente, supervisor: v.supervisor, codreg: v.codreg, nomereg: v.nomereg, vendedor: v.vendedor, codvend: v.codvend, categoria: p.categoria, codprod: p.codprod, descrprod: p.descrprod, qtd_vendida: a.kg, qtd_meta: meta, qtd_fechada: fech, vlr_fechado: fech * p.preco, pm_meta: p.preco, vlr_faturado: a.vl });
+  }
+  BASE = { vendas: { [per]: vendasEx }, metas: { [per]: metasEx }, cargas: [] };
+}
+
+/* ===================================================================== início */
+(async () => {
+  await Store.open();
+  const salvo = await Store.get("base");
+  if (salvo && (Object.keys(salvo.vendas || {}).length || Object.keys(salvo.metas || {}).length)) BASE = salvo;
+  else carregarExemplo();
+  iniciarFiltros();
+  let a = "geral"; try { a = localStorage.getItem("vm-aba") || "geral"; } catch (_) {}
+  irPara(["geral", "metas", "vendas", "importar", "base"].includes(a) ? a : "geral");
+})();
+</script>
