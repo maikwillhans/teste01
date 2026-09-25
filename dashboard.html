@@ -736,7 +736,15 @@ function csv(rows) {
   const cel = v => v == null ? "" : typeof v === "number" ? String(v).replace(".", ",") : /[;"\n]/.test(v) ? `"${String(v).replace(/"/g, '""')}"` : v;
   return "\ufeff" + cols.join(";") + "\n" + rows.map(r => cols.map(c => cel(r[c])).join(";")).join("\n");
 }
-function baixar(nome, conteudo, tipo) {
+async function baixar(nome, conteudo, tipo) {
+  // dentro do claude.ai o arquivo passa pela confirmação do visualizador;
+  // aberto como arquivo local, usa o download normal do navegador
+  const dl = window.claude?.use ? await window.claude.use("downloads").catch(() => null) : null;
+  if (dl) {
+    try { await dl.save({ filename: nome, data: new Blob([conteudo], { type: tipo }) }); }
+    catch (e) { if (e?.code !== "declined") console.warn("download:", e?.code, e?.message); }
+    return;
+  }
   const a = document.createElement("a");
   a.href = URL.createObjectURL(new Blob([conteudo], { type: tipo })); a.download = nome;
   document.body.appendChild(a); a.click(); a.remove();
