@@ -1,0 +1,10 @@
+__pycache__/
+*.pyc
+.pytest_cache/
+.venv/
+# base de dados e planilhas reais ficam fora do git (dados de clientes)
+data/*
+!data/.gitkeep
+*.xls
+*.xlsx
+.streamlit/secrets.toml
