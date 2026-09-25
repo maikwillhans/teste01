@@ -25,8 +25,17 @@ Os dados entram de duas formas, que convivem:
 **Manual:** `pip install -r requirements.txt` e `python sistema.py`.
 
 A base fica em `data/sistema.db` (SQLite, fora do git porque tem dados de clientes); faça cópia
-desse arquivo para ter backup. Para outras pessoas da rede acessarem, inicie com
-`python sistema.py --host 0.0.0.0` e elas abrem `http://<ip-do-seu-computador>:8000`.
+desse arquivo para ter backup.
+
+**Acesso de outros computadores da rede**
+
+1. Feche o `iniciar.bat` se estiver aberto.
+2. Na primeira vez, clique com o botão direito em **`iniciar_rede.bat`** › **Executar como
+   administrador** (libera a porta 8000 no Firewall do Windows). Das próximas vezes, dois cliques bastam.
+3. A janela mostra o endereço para os outros computadores, por exemplo `http://192.168.148.231:8000`.
+4. Se ainda não abrir: em Configurações › Rede e Internet, deixe a rede como **Privada** (o firewall
+   não libera em rede Pública) e confira se os dois computadores estão na mesma rede.
+   Em Mac/Linux: `./iniciar.sh --rede`.
 
 Primeiro uso: **Dados › Importar planilhas** e envie as duas planilhas do mês. Os cadastros são
 criados a partir delas; depois é só lançar e ajustar pelo sistema.
