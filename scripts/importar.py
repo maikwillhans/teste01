@@ -21,7 +21,8 @@ args = ap.parse_args()
 
 conn = conectar(args.banco)
 erro = False
-for arq in args.arquivos:
+# demonstrativo antes: o mês do resumo de metas é identificado pelas vendas
+for arq in sorted(args.arquivos, key=lambda a: "metas" in a.lower()):
     try:
         r = importar(conn, arq, periodo_meta=args.periodo_meta, forcar=args.forcar)
     except ErroImportacao as e:

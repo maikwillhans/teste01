@@ -473,7 +473,12 @@ def validar(conn, periodo: str) -> list[dict]:
         kg_rel, kg, vl_rel, vl, linhas, iguais = r
         dk = (kg_rel - kg) / kg if kg else 0
         dv = (vl_rel - vl) / vl if vl else 0
-        add(g, "Vendido (kg): resumo x notas", round(kg_rel, 1), round(kg, 1), "ok" if abs(dk) < 0.005 else "aviso", f"diferença {dk * 100:.2f}%")
+        if abs(dk) > 0.10:
+            add(g, "Vendido (kg): resumo x notas", round(kg_rel, 1), round(kg, 1), "erro",
+                f"diferença {dk * 100:.1f}%: o resumo de metas deste mês parece ser de outro mês, ou faltam notas. "
+                "Confira em Histórico (dá para trocar o mês da importação de metas).")
+        else:
+            add(g, "Vendido (kg): resumo x notas", round(kg_rel, 1), round(kg, 1), "ok" if abs(dk) < 0.005 else "aviso", f"diferença {dk * 100:.2f}%")
         add(g, "Faturado (R$): resumo x notas", round(vl_rel, 2), round(vl, 2), "ok" if abs(dv) < 0.005 else "aviso", f"diferença {dv * 100:.2f}%")
         add(g, "Linhas de meta com realizado idêntico", linhas, iguais, "ok" if iguais == linhas else "aviso",
             "" if iguais == linhas else "As diferenças por linha estão em Dados > Conciliação.")

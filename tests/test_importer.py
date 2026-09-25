@@ -179,3 +179,29 @@ def test_validacao_confere_importacao(conn):
     importar(conn, _planilha(VENDAS, [_venda()]), "v.xlsx")
     erros = [r for r in validar(conn, "2026-09") if r["estado"] == "erro"]
     assert erros == []
+
+
+def test_mes_das_metas_pelas_vendas_e_troca_de_mes(conn):
+    from vendas_bi.importer import mudar_periodo_carga
+
+    # vendas de agosto e de setembro na base
+    importar(conn, _planilha(VENDAS, [_venda(**{"Data Mvto": "10/08/2026", "Qtde Kg": 80, "Nº Único Nota": 1})]), "ago.xlsx")
+    importar(conn, _planilha(VENDAS, [_venda(**{"Nº Único Nota": 2})]), "set.xlsx")
+    # resumo de agosto emitido em setembro: o 'Vendido' (80 kg) bate com agosto
+    r = importar(conn, _planilha(METAS, [_meta(**{"Vendido": 80})], emissao="02/09/2026 08:00:00"), "m_ago.xlsx")
+    assert r.periodos == ["2026-08"] and "identificado pelas vendas" in r.avisos[0]
+    r = importar(conn, _planilha(METAS, [_meta(**{"Vendido": 100})], emissao="25/09/2026 08:00:00"), "m_set.xlsx")
+    assert r.periodos == ["2026-09"]
+    assert q.periodos(conn) == ["2026-09", "2026-08"]
+    assert conn.execute("SELECT COUNT(*) FROM meta").fetchone()[0] == 2
+
+    # mês informado errado pode ser corrigido depois
+    r = importar(conn, _planilha(METAS, [_meta(**{"Vendido": 80, "Meta": 999})]), "m.xlsx", periodo_meta="2026-10")
+    assert mudar_periodo_carga(conn, r.carga_id, "2026-08") == 1
+    assert conn.execute("SELECT qtd_meta FROM meta WHERE periodo = '2026-08'").fetchone() == (999.0,)
+
+
+def test_linhas_repetidas_no_resumo_sao_somadas(conn):
+    r = importar(conn, _planilha(METAS, [_meta(), _meta(**{"Meta": 100, "P.M. Meta": 30})]), "m.xlsx")
+    assert any("somadas" in a for a in r.avisos)
+    assert conn.execute("SELECT qtd_meta, qtd_meta * pm_meta FROM meta").fetchone() == (300.0, 6000.0)

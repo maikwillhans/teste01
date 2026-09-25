@@ -516,7 +516,7 @@ function telaImportar(el) {
       <strong>Arraste as planilhas aqui ou clique para escolher</strong>
       <p>Demonstrativo Mensal das Vendas Efetuadas e/ou Resumo Geral das Metas/Vendas, do jeito que saem do Sankhya (.xls, .xlsx ou .csv). O tipo é reconhecido sozinho.</p>
       <input type="file" id="file" accept=".xls,.xlsx,.csv" multiple hidden></div>
-    <div class="opts"><div class="f" style="max-width:240px"><label for="pm">Mês das metas</label><input type="month" id="pm"><small>Vazio = mês da data de emissão do resumo</small></div>
+    <div class="opts"><div class="f" style="max-width:260px"><label for="pm">Mês das metas</label><input type="month" id="pm"><small>O resumo de metas não traz o mês. Vazio = o sistema identifica pelas vendas do demonstrativo do mesmo mês (envie os dois juntos).</small></div>
       <label style="display:flex;gap:6px;align-items:center"><input type="checkbox" id="fz"> Reimportar mesmo se o arquivo já foi importado</label></div>
     <div class="card"><h3>O que acontece numa importação</h3><div class="hint" style="margin:0;max-width:95ch">
       Vendedores, clientes, produtos, regiões, TOPs e empresas da planilha são criados ou atualizados nos cadastros. As notas e metas importadas antes para o mesmo mês são substituídas pelas da planilha. Lançamentos feitos no sistema (origem "sistema") continuam, a não ser que a planilha traga uma nota com o mesmo nº único. Cada importação pode ser desfeita em Histórico e exportação.</div></div>
@@ -529,7 +529,7 @@ function telaImportar(el) {
   drop.ondrop = e => { e.preventDefault(); drop.classList.remove("over"); enviar([...e.dataTransfer.files]); };
   inp.onchange = () => { enviar([...inp.files]); inp.value = ""; };
   async function enviar(files) {
-    files.sort((a, b) => /metas/i.test(b.name) - /metas/i.test(a.name));   // resumo de metas antes; o demonstrativo corrige os códigos provisórios
+    files.sort((a, b) => /metas/i.test(a.name) - /metas/i.test(b.name));   // demonstrativo antes: o mês do resumo de metas é identificado pelas vendas
     for (const f of files) {
       const item = document.createElement("div"); item.className = "msg info"; item.textContent = `Enviando ${f.name}…`; $("log").prepend(item);
       const fd = new FormData(); fd.append("arquivo", f); fd.append("periodo_meta", $("pm").value); fd.append("forcar", $("fz").checked ? "true" : "false");
@@ -559,8 +559,20 @@ async function telaCargas(el) {
     { k: "id", t: "#", n: 1 }, { k: "tipo", t: "Relatório", f: v => v === "vendas" ? "Demonstrativo de vendas" : "Resumo de metas" }, { k: "arquivo", t: "Arquivo" },
     { k: "periodos", t: "Período", f: v => String(v).split(",").map(perLabel).join(", ") }, { k: "linhas", t: "Linhas", n: 1, f: v => num(v) },
     { k: "emitido_em", t: "Emitido em" }, { k: "usuario_relatorio", t: "Usuário" }, { k: "importado_em", t: "Importado em" },
-    { k: "id", t: "", f: v => `<button class="btn link" data-desf="${v}">Desfazer</button>` },
+    { k: "id", t: "", f: (v, r) => `${r.tipo === "metas" ? `<button class="btn link" data-mes="${v}">Trocar mês</button>` : ""}<button class="btn link" data-desf="${v}">Desfazer</button>` },
   ], rows, null);
+  el.querySelectorAll("[data-mes]").forEach(b => b.onclick = () => {
+    const c = rows.find(r => r.id === +b.dataset.mes);
+    gaveta({
+      titulo: "Trocar o mês das metas", sub: `${c.arquivo} · hoje em ${perLabel(c.periodos)}`, rotuloSalvar: "Trocar mês",
+      corpo: `${campo("tm-per", "Mês correto", c.periodos, { tipo: "month", obrig: true })}<div class="note">As metas desta importação passam para o mês escolhido. Metas importadas de outra planilha que já estejam nesse mês são substituídas; as lançadas no sistema ficam.</div>`,
+      salvar: async d => {
+        const p = d.querySelector("#tm-per").value;
+        const r = await api("PUT", `/api/cargas/${c.id}/periodo`, { periodo: p });
+        toast(`${num(r.metas)} metas movidas para ${perLabel(p)}.`); S.periodo = p; await carregarInicio(); await preencherFiltros(); render();
+      },
+    });
+  });
   el.querySelectorAll("[data-desf]").forEach(b => b.onclick = async () => {
     const c = rows.find(r => r.id === +b.dataset.desf);
     if (!await confirmar("Desfazer importação?", `${c.arquivo} (${String(c.periodos).split(",").map(perLabel).join(", ")}): as notas e metas que vieram dessa planilha serão removidas.`, "Desfazer")) return;

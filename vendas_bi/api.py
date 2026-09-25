@@ -12,7 +12,7 @@ from fastapi.staticfiles import StaticFiles
 from . import consultas as q
 from . import servicos as s
 from .db import BANCO_PADRAO, conectar
-from .importer import ErroImportacao, desfazer_carga, importar
+from .importer import ErroImportacao, desfazer_carga, importar, mudar_periodo_carga
 
 WEB = Path(__file__).resolve().parent.parent / "web"
 
@@ -162,6 +162,10 @@ def criar_app(caminho_banco: str | Path | None = None) -> FastAPI:
     @app.delete("/api/cargas/{carga_id}")
     def cargas_desfazer(carga_id: int):
         return desfazer_carga(conn, carga_id)
+
+    @app.put("/api/cargas/{carga_id}/periodo")
+    async def cargas_mudar_periodo(carga_id: int, request: Request):
+        return {"metas": mudar_periodo_carga(conn, carga_id, (await request.json()).get("periodo"))}
 
     @app.get("/api/validacao")
     def validacao(periodo: str):

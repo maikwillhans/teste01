@@ -296,6 +296,20 @@ def _gravar_vendas(conn, df: pd.DataFrame, carga_id: int, origem: str) -> int:
     return removidas
 
 
+def _somar_repetidas(m: pd.DataFrame) -> pd.DataFrame:
+    """Linhas com a mesma região + vendedor + produto no mês são somadas (nenhuma se perde)."""
+    chave = ["periodo", "codreg", "codvend", "codprod"]
+    if not m.duplicated(chave).any():
+        return m
+    m = m.assign(_prev=m["qtd_meta"] * m["pm_meta"])
+    soma = ["qtd_meta", "qtd_fechada", "vlr_fechado", "qtd_vendida", "vlr_faturado", "_prev"]
+    g = m.groupby(chave, dropna=False, sort=False)
+    out = g[soma].sum().reset_index()
+    pm_max = g["pm_meta"].max().reset_index(drop=True)
+    out["pm_meta"] = (out["_prev"] / out["qtd_meta"].where(out["qtd_meta"] != 0)).fillna(pm_max)
+    return out.drop(columns="_prev")
+
+
 def _gravar_metas(conn, df: pd.DataFrame, carga_id: int, origem: str) -> int:
     _cadastros_regiao(conn, df)
     prox = conn.execute("SELECT MAX(900000, COALESCE(MAX(codvend), 0) + 1) FROM vendedor").fetchone()[0]
@@ -324,6 +338,7 @@ def _gravar_metas(conn, df: pd.DataFrame, carga_id: int, origem: str) -> int:
     conn.execute(f"DELETE FROM meta WHERE periodo IN ({marc}) AND origem <> 'manual'", periodos)
     m = df.copy()
     m["codvend"] = m["vendedor"].map(codigos)
+    m = _somar_repetidas(m)
     colunas = ["periodo", "codreg", "codvend", "codprod", "qtd_meta", "pm_meta", "qtd_fechada", "vlr_fechado",
                "qtd_vendida", "vlr_faturado"]
     conn.executemany(
@@ -366,6 +381,68 @@ def desfazer_carga(conn: sqlite3.Connection, carga_id: int) -> dict:
     return {"notas": notas, "metas": metas}
 
 
+def _realizado_por_mes(conn) -> dict[str, float]:
+    return dict(conn.execute(
+        "SELECT substr(n.dtmov,1,7), SUM(i.qtd_kg) FROM item i JOIN nota n ON n.nunota = i.nunota "
+        "JOIN tipo_operacao t ON t.codtipoper = n.codtipoper WHERE t.operacao IN ('V','D') GROUP BY 1").fetchall())
+
+
+def _conferir_mes_metas(conn, rel: Relatorio, informado: bool) -> None:
+    """O resumo de metas não diz o mês. Sem mês informado, usa o mês cujas vendas
+    batem com o 'Vendido' do resumo; só cai na data de emissão se não houver vendas parecidas."""
+    vendido = float(rel.dados["qtd_vendida"].sum())
+    atual = rel.periodos[0]
+    meses = {p: kg for p, kg in _realizado_por_mes(conn).items() if kg}
+    if not meses or not vendido:
+        if not informado:
+            rel.avisos.append(f"Mês das metas definido pela data de emissão do relatório: {atual[5:]}/{atual[:4]}. "
+                              "Se não for esse, desfaça e importe de novo informando o mês.")
+        return
+    dif = {p: abs(vendido - kg) / abs(kg) for p, kg in meses.items()}
+    melhor = min(dif, key=dif.get)
+    if informado:
+        if atual in dif and dif[atual] > 0.10 and dif[melhor] < 0.03 and melhor != atual:
+            rel.avisos.append(f"Atenção: o 'Vendido' deste resumo bate com as vendas de {melhor[5:]}/{melhor[:4]}, "
+                              f"não de {atual[5:]}/{atual[:4]}. Confira o mês informado.")
+        return
+    if dif[melhor] < 0.03:
+        if melhor != atual:
+            rel.dados["periodo"] = melhor
+        rel.avisos.append(f"Mês das metas identificado pelas vendas já importadas: {melhor[5:]}/{melhor[:4]} "
+                          f"(o 'Vendido' do resumo bate com as notas do mês, diferença {dif[melhor] * 100:.1f}%).")
+    else:
+        rel.avisos.append(f"Mês das metas definido pela data de emissão: {atual[5:]}/{atual[:4]}. O 'Vendido' do resumo "
+                          "não bate com as vendas de nenhum mês importado; importe o demonstrativo do mesmo mês "
+                          "antes ou informe o mês.")
+
+
+def _avisos_notas(df: pd.DataFrame) -> list[str]:
+    """Notas cujos itens trazem cabeçalhos diferentes (ex.: dois vendedores na mesma nota)."""
+    campos = ["codvend", "codparc", "dtmov", "codtipoper", "codreg"]
+    varia = df.groupby("nunota")[campos].nunique(dropna=False)
+    n = int((varia > 1).any(axis=1).sum())
+    if not n:
+        return []
+    return [f"{n} nota(s) têm itens com vendedor, cliente, data, TOP ou região diferentes; "
+            "foi usado o do primeiro item. Veja em Validação."]
+
+
+def mudar_periodo_carga(conn, carga_id: int, periodo: str) -> int:
+    """Move as metas de uma importação para outro mês (quando o mês saiu errado)."""
+    if not re.fullmatch(r"\d{4}-\d{2}", periodo or ""):
+        raise ErroImportacao("Informe o mês no formato AAAA-MM.")
+    tipo = conn.execute("SELECT tipo FROM carga WHERE id = ?", (carga_id,)).fetchone()
+    if not tipo:
+        raise ErroImportacao("Importação não encontrada.")
+    if tipo[0] != METAS:
+        raise ErroImportacao("Só dá para trocar o mês de um resumo de metas; o mês das vendas vem da data das notas.")
+    with conn:
+        conn.execute("DELETE FROM meta WHERE periodo = ? AND origem <> 'manual' AND COALESCE(carga_id, -1) <> ?", (periodo, carga_id))
+        n = conn.execute("UPDATE OR REPLACE meta SET periodo = ? WHERE carga_id = ?", (periodo, carga_id)).rowcount
+        conn.execute("UPDATE carga SET periodos = ? WHERE id = ?", (periodo, carga_id))
+    return n
+
+
 def importar(conn: sqlite3.Connection, origem, nome: str | None = None,
              periodo_meta: str | None = None, forcar: bool = False) -> ResultadoCarga:
     """Lê um arquivo e grava na base. Arquivo idêntico ao último importado é ignorado."""
@@ -381,6 +458,13 @@ def importar(conn: sqlite3.Connection, origem, nome: str | None = None,
     sha = hashlib.sha256(conteudo).hexdigest()
 
     rel = ler_relatorio(conteudo, nome, periodo_meta)
+    if rel.tipo == METAS:
+        _conferir_mes_metas(conn, rel, informado=periodo_meta is not None)
+        if rel.dados.duplicated(["codreg", "vendedor", "codprod"]).any():
+            n = int(rel.dados.duplicated(["codreg", "vendedor", "codprod"]).sum())
+            rel.avisos.append(f"{n} linha(s) repetida(s) (mesma região, vendedor e produto) foram somadas.")
+    else:
+        rel.avisos.extend(_avisos_notas(rel.dados))
     if not forcar:
         ja = conn.execute(
             "SELECT id FROM carga WHERE sha256 = ? AND tipo = ? AND periodos = ? ORDER BY id DESC LIMIT 1",
