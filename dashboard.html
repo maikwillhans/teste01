@@ -156,10 +156,10 @@ section.panel { display: grid; gap: 18px; margin-top: 16px; }
 .sw.tick { width: 3px; height: 14px; border-radius: 0; background: var(--ink); }
 
 .hbars { display: grid; gap: 7px; }
-.hrow { display: grid; grid-template-columns: minmax(90px, 210px) 1fr 64px; gap: 12px; align-items: center; font-size: 12.5px; border-radius: 8px; padding: 1px 4px; }
+.hrow { display: grid; grid-template-columns: minmax(90px, 210px) 1fr 78px; gap: 12px; align-items: center; font-size: 12.5px; border-radius: 8px; padding: 1px 4px; }
 .hrow:hover { background: var(--surface-2); }
 .hrow .lab { color: var(--ink-2); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; text-align: right; font-weight: 500; }
-.hrow .val { text-align: right; font-variant-numeric: tabular-nums; color: var(--ink); font-weight: 700; }
+.hrow .val { white-space: nowrap; text-align: right; font-variant-numeric: tabular-nums; color: var(--ink); font-weight: 700; }
 .track { position: relative; height: 18px; }
 .track .b { position: absolute; top: 2px; bottom: 2px; left: 0; border-radius: 0 5px 5px 0; }
 .track .b.v { background: var(--accent); }
@@ -247,6 +247,8 @@ tbody tr:hover td { background: var(--surface-2); }
     </nav>
     <div class="nav-label">Dados</div>
     <nav class="nav">
+      <button class="tab" data-tab="detalhe"><svg class="i" viewBox="0 0 24 24"><rect x="3" y="4" width="18" height="16" rx="2"/><path d="M3 10h18M9 10v10"/></svg>Dados completos</button>
+      <button class="tab" data-tab="validacao"><svg class="i" viewBox="0 0 24 24"><path d="M12 3 4 6v6c0 4.5 3.4 8.3 8 9 4.6-.7 8-4.5 8-9V6z"/><path d="m9 12 2 2 4-4"/></svg>Validação<span class="count" id="n-valid">–</span></button>
       <button class="tab" data-tab="importar"><svg class="i" viewBox="0 0 24 24"><path d="M12 15V3"/><path d="m7 8 5-5 5 5"/><path d="M5 15v4a2 2 0 0 0 2 2h10a2 2 0 0 0 2-2v-4"/></svg>Importar planilhas</button>
       <button class="tab" data-tab="base"><svg class="i" viewBox="0 0 24 24"><ellipse cx="12" cy="5" rx="8" ry="3"/><path d="M4 5v6c0 1.7 3.6 3 8 3s8-1.3 8-3V5"/><path d="M4 11v6c0 1.7 3.6 3 8 3s8-1.3 8-3v-6"/></svg>Base de dados<span class="count" id="n-cargas">0</span></button>
     </nav>
@@ -302,11 +304,14 @@ tbody tr:hover td { background: var(--surface-2); }
     <div class="card" id="conc-card"></div>
   </section>
 
+  <section class="panel" id="p-detalhe" hidden></section>
+  <section class="panel" id="p-validacao" hidden></section>
   <section class="panel" id="p-base" hidden></section>
 </main>
   </div>
 </div>
 <div id="tip" hidden></div>
+<script type="application/json" id="dados-embutidos">null</script>
 
 <script>
 "use strict";
@@ -331,7 +336,9 @@ const LAYOUTS = {
       "Cód Mix Bíblia": ["codmix_biblia", "i"], "Mix Bíblia": ["mix_biblia", "s"], "Cód. Rede": ["codrede", "i"],
       "Cód. Vendedor": ["codvend", "i"], "Nº CTE": ["nucte", "i"], "Nº Único Nota": ["nunota", "i"],
       "Rede": ["rede", "s"], "Região País": ["regiao_pais", "s"], "Ref. RVV": ["ref_rvv", "s"],
+      "Preço Médio": ["preco_medio_rel", "f", "opc"],
     },
+    controle: { somas: ["Qtde Kg", "Valor Total Produto", "Valor Total Com ST", "Valor ST"], distintos: ["Nº Único Nota", "Cód. Cliente", "Cód.Produto", "Cód. Vendedor", "Cidade", "Uf"], contagem: "Operação" },
   },
   metas: {
     titulo: "RESUMO GERAL DAS METAS/VENDAS",
@@ -343,10 +350,18 @@ const LAYOUTS = {
       "Cód.": ["codprod", "i"], "Produto": ["descrprod", "s"], "Vendido": ["qtd_vendida", "f"],
       "Meta": ["qtd_meta", "f"], "Fechado": ["qtd_fechada", "f"], "Valor Fechado": ["vlr_fechado", "f"],
       "P.M. Meta": ["pm_meta", "f"], "Valor Faturado": ["vlr_faturado", "f"],
+      "% Meta": ["perc_meta_rel", "f", "opc"], "% Prev.": ["perc_prev_rel", "f", "opc"], "Diferença": ["diferenca_rel", "f", "opc"],
+      "P.M. Real.": ["pm_real_rel", "f", "opc"], "Prévia": ["previa_rel", "f", "opc"], "Valor Fat. Previsto": ["vlr_previsto_rel", "f", "opc"],
     },
+    controle: { somas: ["Vendido", "Meta", "Fechado", "Valor Fechado", "Valor Faturado", "Valor Fat. Previsto", "Diferença", "Prévia"], distintos: ["Vendedor", "Cód.", "Região", "Supervisor"], contagem: "Categoria" },
   },
 };
 const NOME_TIPO = { vendas: "Demonstrativo de vendas", metas: "Resumo de metas" };
+// nome amigável de cada coluna da base = cabeçalho original do relatório
+const CABECALHO = { vendas: {}, metas: {} };
+for (const [t, L] of Object.entries(LAYOUTS)) for (const [h, [d]] of Object.entries(L.colunas)) CABECALHO[t][d] = h;
+Object.assign(CABECALHO.vendas, { periodo: "Período", codreg: "Cód. Região", nomereg: "Região" });
+Object.assign(CABECALHO.metas, { periodo: "Período", codreg: "Cód. Região", nomereg: "Região", codvend: "Cód. Vendedor (do demonstrativo)" });
 
 /* ===================================================================== formatação */
 const nf = (c = 0) => new Intl.NumberFormat("pt-BR", { minimumFractionDigits: c, maximumFractionDigits: c });
@@ -388,6 +403,33 @@ const Store = {
 
 /* Base: { vendas: {periodo: [linhas]}, metas: {periodo: [linhas]}, cargas: [] } */
 let BASE = { vendas: {}, metas: {}, cargas: [] };
+let EMB = null;                                     // dados reais embutidos no arquivo
+let DELTA = { vendas: {}, metas: {}, cargas: [] };   // importações feitas neste navegador
+
+function lerEmbutidos() {
+  let j = null;
+  try { j = JSON.parse(document.getElementById("dados-embutidos").textContent); } catch (_) {}
+  if (!j) return null;
+  const out = { vendas: {}, metas: {}, cargas: j.cargas || [], gerado_em: j.gerado_em };
+  for (const t of ["vendas", "metas"]) {
+    const T = j[t]; if (!T) continue;
+    const cols = Object.entries(T.cols);
+    for (let r = 0; r < T.n; r++) {
+      const o = {};
+      for (const [c, v] of cols) o[c] = v.d ? (v.i[r] < 0 ? null : v.d[v.i[r]]) : v.v[r];
+      for (const k of ["qtd_kg", "vlrtot", "vlrsubst", "vlrtot_st", "qtd_meta", "pm_meta", "qtd_vendida", "vlr_faturado", "qtd_fechada", "vlr_fechado"]) if (k in o && o[k] == null) o[k] = 0;
+      (out[t][o.periodo] ||= []).push(o);
+    }
+  }
+  return out;
+}
+
+function montarBase() {
+  BASE = { vendas: { ...(EMB?.vendas || {}) }, metas: { ...(EMB?.metas || {}) }, cargas: [...(EMB?.cargas || [])] };
+  for (const t of ["vendas", "metas"]) for (const [p, rows] of Object.entries(DELTA[t])) BASE[t][p] = rows;
+  BASE.cargas.push(...DELTA.cargas);
+  resolverCodvend();
+}
 let EXEMPLO = false;
 let PERSISTE = true;
 
@@ -423,7 +465,7 @@ function lerRelatorio(linhas, periodoMeta) {
   if ((m = topo.match(/Total de registros:\s*(\d+)/))) total = +m[1];
 
   const cab = (linhas[iCab] || []).map(v => v == null ? "" : String(v).trim());
-  const faltando = Object.keys(L.colunas).filter(c => !cab.includes(c));
+  const faltando = Object.entries(L.colunas).filter(([c, cfg]) => cfg[2] !== "opc" && !cab.includes(c)).map(([c]) => c);
   if (faltando.length) throw new Error(`Faltam colunas no ${NOME_TIPO[tipo].toLowerCase()}: ${faltando.join(", ")}.`);
   const idx = Object.fromEntries(cab.map((c, i) => [c, i]));
   const iChave = idx[L.chave];
@@ -440,7 +482,7 @@ function lerRelatorio(linhas, periodoMeta) {
     const k = lin[iChave];
     if (k == null || String(k).trim() === "") continue;   // rodapé de totais / linhas vazias
     const o = {};
-    for (const [col, [dest, t]] of Object.entries(L.colunas)) o[dest] = converter(lin[idx[col]], t);
+    for (const [col, [dest, t]] of Object.entries(L.colunas)) if (col in idx) o[dest] = converter(lin[idx[col]], t);
     const reg = String(o.regiao ?? "");
     const mm = reg.match(/^\s*(\d+)\s*-\s*(.+)$/);
     o.codreg = mm ? +mm[1] : null; o.nomereg = mm ? mm[2].trim() : (reg || null);
@@ -452,7 +494,20 @@ function lerRelatorio(linhas, periodoMeta) {
   if (!dados.length) throw new Error("Nenhuma linha de dados encontrada no relatório.");
   const avisos = [];
   if (total != null && total !== dados.length) avisos.push(`O relatório informa ${num(total)} registros e foram lidos ${num(dados.length)}.`);
-  return { tipo, dados, emitido, usuario, avisos };
+  // totais de controle lidos direto das células (para a página Validação)
+  const C = L.controle, controle = { linhas: 0, total_informado: total, somas: {}, distintos: {}, contagem_campo: C.contagem, contagem: {} };
+  const dist = Object.fromEntries(C.distintos.map(c => [c, new Set()]));
+  C.somas.forEach(c => controle.somas[c] = 0);
+  for (let r = iCab + 1; r < linhas.length; r++) {
+    const lin = linhas[r] || [], k = lin[iChave];
+    if (k == null || String(k).trim() === "") continue;
+    controle.linhas++;
+    for (const c of C.somas) if (c in idx) controle.somas[c] += converter(lin[idx[c]], "f");
+    for (const c of C.distintos) if (c in idx && lin[idx[c]] != null && lin[idx[c]] !== "") dist[c].add(lin[idx[c]]);
+    const g = String(lin[idx[C.contagem]] ?? "").trim(); controle.contagem[g] = (controle.contagem[g] || 0) + 1;
+  }
+  for (const c of C.distintos) controle.distintos[c] = dist[c].size;
+  return { tipo, dados, emitido, usuario, avisos, controle };
 }
 
 async function hashDe(buf) {
@@ -477,20 +532,21 @@ async function importarArquivo(file, periodoMeta, forcar) {
   const periodos = [...new Set(rel.dados.map(d => d.periodo))].sort();
 
   if (EXEMPLO) { BASE = { vendas: {}, metas: {}, cargas: [] }; EXEMPLO = false; }
+  const ctl = rel.controle;
   if (!forcar) {
     const ja = [...BASE.cargas].reverse().find(c => c.tipo === rel.tipo && c.periodos.join() === periodos.join());
     if (ja && ja.sha256 === sha) return { ...rel, periodos, ignorada: true, substituidas: 0 };
   }
   let substituidas = 0;
-  for (const p of periodos) { substituidas += (BASE[rel.tipo][p] || []).length; BASE[rel.tipo][p] = []; }
-  for (const d of rel.dados) BASE[rel.tipo][d.periodo].push(d);
-  BASE.cargas.push({
-    id: (BASE.cargas.at(-1)?.id || 0) + 1, tipo: rel.tipo, origem: "planilha", arquivo: file.name, sha256: sha,
+  for (const p of periodos) { substituidas += (BASE[rel.tipo][p] || []).length; DELTA[rel.tipo][p] = []; }
+  for (const d of rel.dados) DELTA[rel.tipo][d.periodo].push(d);
+  DELTA.cargas.push({
+    id: BASE.cargas.reduce((m, c) => Math.max(m, c.id || 0), 0) + 1, tipo: rel.tipo, origem: "planilha", arquivo: file.name, sha256: sha,
     periodos, linhas: rel.dados.length, emitido_em: rel.emitido, usuario_relatorio: rel.usuario,
-    importado_em: new Date().toLocaleString("pt-BR"),
+    importado_em: new Date().toLocaleString("pt-BR"), controle: ctl,
   });
-  resolverCodvend();
-  PERSISTE = await Store.set("base", BASE);
+  montarBase();
+  PERSISTE = await Store.set("delta", DELTA);
   return { ...rel, periodos, ignorada: false, substituidas };
 }
 
@@ -732,6 +788,14 @@ function telaGeral() {
     <div class="grid2">
       <div class="card"><h3>Meta por supervisor</h3><div class="hint">Vendido e carteira em kg contra a meta</div>${bullet(metaPor("supervisor"))}</div>
       <div class="card"><h3>Meta por categoria</h3><div class="hint">Vendido e carteira em kg contra a meta</div>${bullet(metaPor("categoria"))}</div>
+    </div>
+    <div class="grid2">
+      <div class="card"><h3>Maiores clientes</h3><div class="hint">Faturamento líquido, R$</div>${ranking(vendasPor("nomeparc"), 10)}</div>
+      <div class="card"><h3>Produtos mais vendidos</h3><div class="hint">Faturamento líquido, R$</div>${ranking(vendasPor("descrprod"), 10)}</div>
+    </div>
+    <div class="grid2">
+      <div class="card"><h3>Por perfil de cliente</h3><div class="hint">Faturamento líquido, R$</div>${ranking(vendasPor("perfil"), 10)}</div>
+      <div class="card"><h3>Por UF</h3><div class="hint">Faturamento líquido, R$</div>${ranking(vendasPor("uf"), 10)}</div>
     </div>`;
   bindTips($("p-geral"));
 }
@@ -757,11 +821,16 @@ function telaMetas() {
     { k: "meta_valor", t: "Meta R$", n: 1, f: v => brl(v) },
     { k: "vend_valor", t: "Faturado R$", n: 1, f: v => brl(v) },
     { k: "perc_valor", t: "% Meta R$", n: 1, f: v => pct(v) },
-  ], rows, ["meta_kg", -1]);
+    { k: "pm_meta", t: "P.M. meta", n: 1, f: v => brl(v, 2) },
+    { k: "pm_real", t: "P.M. real", n: 1, f: v => brl(v, 2) },
+    { k: "diferenca", t: "Diferença kg", n: 1, f: v => num(v) },
+    { k: "previa", t: "Prévia kg", n: 1, f: v => num(v) },
+    { k: "cart_valor", t: "Carteira R$", n: 1, f: v => brl(v) },
+  ], rows.map(r => ({ ...r, pm_meta: div(r.meta_valor, r.meta_kg), pm_real: div(r.vend_valor, r.vend_kg), diferenca: r.meta_kg - r.vend_kg, previa: r.meta_kg - r.vend_kg - r.cart_kg })), ["meta_kg", -1]);
   bindTips($("p-metas"));
 }
 
-const DIM_VENDA = { nomeparc: "Cliente", descrprod: "Produto", vendedor: "Vendedor", supervisor: "Supervisor", uf: "UF", cidade: "Cidade", perfil: "Perfil", rede: "Rede", mix_comercial: "Mix comercial", mix_biblia: "Mix bíblia", linha: "Linha", grupoprod: "Conta estoque", descroper: "TOP" };
+const DIM_VENDA = { nomeparc: "Cliente", descrprod: "Produto", vendedor: "Vendedor", supervisor: "Supervisor", gerente: "Gerente", nomereg: "Região", uf: "UF", cidade: "Cidade", regiao_pais: "Região do país", perfil: "Perfil", rede: "Rede", mix_comercial: "Mix comercial", mix_biblia: "Mix bíblia", linha: "Linha", familia: "Família", grupoprod: "Conta estoque", descroper: "TOP", operacao: "Operação (V/D/B)", codemp: "Empresa", dtmov: "Data" };
 let dimVenda = "nomeparc", topN = 15;
 function telaVendas() {
   const rows = vendasPor(dimVenda), total = rows.reduce((s, r) => s + r.faturado, 0);
@@ -788,6 +857,138 @@ function telaVendas() {
     { k: "notas", t: "Notas", n: 1, f: v => num(v) },
   ], rows, ["faturado", -1]);
   bindTips($("p-vendas"));
+}
+
+/* ---------- dados completos: todas as colunas das duas planilhas ---------- */
+let detTipo = "vendas", detBusca = "", detPag = 0, detSort = null, detDir = 1;
+const DET_POR_PAG = 100;
+function colunasDetalhe(t) {
+  const ordem = t === "vendas"
+    ? ["periodo", "dtmov", "codemp", "nunota", "numnota", "codtipoper", "descroper", "operacao", "codparc", "nomeparc", "perfil", "cidade", "uf", "regiao_pais", "codrede", "rede", "codreg", "nomereg", "codvend", "vendedor", "supervisor", "gerente", "codprod", "descrprod", "codgrupoprod", "grupoprod", "linha", "familia", "codmix_comercial", "mix_comercial", "codmix_biblia", "mix_biblia", "qtd_kg", "vlrtot", "preco_medio_rel", "vlrsubst", "vlrtot_st", "nucte", "ref_rvv"]
+    : ["periodo", "vendedor_ativo", "gerente", "supervisor", "codreg", "nomereg", "vendedor", "codvend", "categoria", "codprod", "descrprod", "qtd_vendida", "qtd_meta", "qtd_fechada", "vlr_fechado", "pm_meta", "perc_meta_rel", "perc_prev_rel", "diferenca_rel", "pm_real_rel", "previa_rel", "vlr_faturado", "vlr_previsto_rel"];
+  const dec = { qtd_kg: 2, vlrtot: 2, preco_medio_rel: 2, vlrsubst: 2, vlrtot_st: 2, qtd_vendida: 3, qtd_meta: 0, qtd_fechada: 2, vlr_fechado: 2, pm_meta: 2, perc_meta_rel: 1, perc_prev_rel: 1, diferenca_rel: 3, pm_real_rel: 2, previa_rel: 3, vlr_faturado: 2, vlr_previsto_rel: 2 };
+  return ordem.map(k => ({ k, t: CABECALHO[t][k] || k, n: k in dec, dec: dec[k] }));
+}
+function telaDetalhe() {
+  const cols = colunasDetalhe(detTipo);
+  const fonte = detTipo === "vendas" ? vendas() : metas();
+  const q = detBusca.trim().toLowerCase();
+  let rows = q ? fonte.filter(r => cols.some(c => r[c.k] != null && String(r[c.k]).toLowerCase().includes(q))) : fonte;
+  if (detSort) rows = [...rows].sort((a, b) => { const x = a[detSort], y = b[detSort]; if (x == null) return 1; if (y == null) return -1; return (typeof x === "number" ? x - y : String(x).localeCompare(String(y), "pt-BR")) * detDir; });
+  const pags = Math.max(1, Math.ceil(rows.length / DET_POR_PAG)); detPag = Math.min(detPag, pags - 1);
+  const pagina = rows.slice(detPag * DET_POR_PAG, (detPag + 1) * DET_POR_PAG);
+  const tot = detTipo === "vendas"
+    ? `${num(rows.length)} itens · ${num(rows.reduce((s, r) => s + r.qtd_kg, 0), 1)} kg · ${brl(rows.reduce((s, r) => s + r.vlrtot, 0), 2)}`
+    : `${num(rows.length)} linhas · meta ${num(rows.reduce((s, r) => s + r.qtd_meta, 0))} kg · vendido ${num(rows.reduce((s, r) => s + r.qtd_vendida, 0), 1)} kg`;
+  $("p-detalhe").innerHTML = `
+    <div class="controls">
+      <div class="seg"><button data-det="vendas" aria-pressed="${detTipo === "vendas"}">Demonstrativo de vendas (${colunasDetalhe("vendas").length} colunas)</button><button data-det="metas" aria-pressed="${detTipo === "metas"}">Resumo de metas (${colunasDetalhe("metas").length} colunas)</button></div>
+      <input id="det-busca" type="search" placeholder="Buscar cliente, produto, nota, cidade…" value="${esc(detBusca)}" style="flex:1 1 260px;max-width:420px;background:var(--surface);border:1px solid var(--line);border-radius:10px;padding:8px 12px;box-shadow:var(--shadow)">
+      <button class="btn ghost small" id="det-csv">Exportar CSV</button>
+    </div>
+    <div class="meta-line" style="margin-top:0"><b>${tot}</b> <span>· filtros do topo aplicados · clique no título da coluna para ordenar</span></div>
+    <div class="tbl" style="max-height:640px"><table><thead><tr>${cols.map(c => `<th class="${c.n ? "n" : ""}" data-k="${c.k}" aria-sort="${c.k === detSort ? (detDir > 0 ? "ascending" : "descending") : "none"}">${esc(c.t)}</th>`).join("")}</tr></thead>
+      <tbody>${pagina.map(r => `<tr>${cols.map(c => `<td class="${c.n ? "n" : ""}">${r[c.k] == null ? "" : c.n ? num(r[c.k], c.dec) : c.k === "dtmov" ? r[c.k].split("-").reverse().join("/") : esc(r[c.k])}</td>`).join("")}</tr>`).join("") || `<tr><td colspan="${cols.length}" class="empty">Nada encontrado.</td></tr>`}</tbody></table></div>
+    <div class="controls"><button class="btn ghost small" id="det-ant" ${detPag ? "" : "disabled"}>‹ Anterior</button><span style="color:var(--muted)">Página ${detPag + 1} de ${pags}</span><button class="btn ghost small" id="det-prox" ${detPag < pags - 1 ? "" : "disabled"}>Próxima ›</button></div>`;
+  $("p-detalhe").querySelectorAll("[data-det]").forEach(b => b.onclick = () => { detTipo = b.dataset.det; detPag = 0; detSort = null; telaDetalhe(); });
+  $("p-detalhe").querySelectorAll("th").forEach(th => th.onclick = () => { const k = th.dataset.k; detDir = k === detSort ? -detDir : -1; detSort = k; telaDetalhe(); });
+  let t; $("det-busca").oninput = e => { clearTimeout(t); t = setTimeout(() => { detBusca = e.target.value; detPag = 0; telaDetalhe(); const el = $("det-busca"); el.focus(); el.setSelectionRange(el.value.length, el.value.length); }, 250); };
+  $("det-ant").onclick = () => { detPag--; telaDetalhe(); };
+  $("det-prox").onclick = () => { detPag++; telaDetalhe(); };
+  $("det-csv").onclick = () => baixar(`${detTipo}_${F.periodo}.csv`, csv(rows.map(r => Object.fromEntries(cols.map(c => [c.t, r[c.k]])))), "text/csv");
+}
+
+/* ---------- validação: dados carregados x planilhas originais ---------- */
+function validar(periodo) {
+  const out = [];
+  const add = (grupo, item, esperado, obtido, estado, obs = "") => out.push({ grupo, item, esperado, obtido, estado, obs });
+  const perto = (a, b, tol = 0.01) => Math.abs(a - b) <= tol;
+  const V = BASE.vendas[periodo] || [], M = BASE.metas[periodo] || [];
+  const carga = t => [...BASE.cargas].reverse().find(c => c.tipo === t && c.periodos.includes(periodo) && c.controle);
+  for (const [t, rows] of [["vendas", V], ["metas", M]]) {
+    const c = carga(t), G = NOME_TIPO[t];
+    if (!rows.length) { add(G, "Relatório no período", "presente", "ausente", "aviso", "Importe o relatório deste mês."); continue; }
+    if (!c) { add(G, "Totais de controle", "–", "–", "aviso", "Carga sem totais de controle."); continue; }
+    const ctl = c.controle, L = LAYOUTS[t];
+    add(G, "Arquivo de origem", "", "", "ok", `${c.arquivo} · emitido em ${c.emitido_em || "–"} · usuário ${c.usuario_relatorio || "–"}`);
+    if (ctl.total_informado != null) add(G, "Linhas: 'Total de registros' do relatório", num(ctl.total_informado), num(rows.length), ctl.total_informado === rows.length ? "ok" : "erro");
+    add(G, "Linhas: contadas na planilha", num(ctl.linhas), num(rows.length), ctl.linhas === rows.length ? "ok" : "erro");
+    for (const [h, esperado] of Object.entries(ctl.somas)) {
+      const dest = L.colunas[h][0], obtido = rows.reduce((s, r) => s + (r[dest] || 0), 0);
+      add(G, `Soma de "${h}"`, num(esperado, 2), num(obtido, 2), perto(esperado, obtido, 0.05) ? "ok" : "erro");
+    }
+    for (const [h, esperado] of Object.entries(ctl.distintos)) {
+      const dest = L.colunas[h][0]; const n = dest === "regiao" ? new Set(rows.map(r => r.codreg + "|" + r.nomereg)).size : new Set(rows.map(r => r[dest]).filter(v => v != null)).size;
+      add(G, `Valores distintos de "${h}"`, num(esperado), num(n), esperado === n ? "ok" : "erro");
+    }
+    const campo = L.colunas[ctl.contagem_campo][0];
+    for (const [k, esperado] of Object.entries(ctl.contagem)) {
+      const n = rows.filter(r => String(r[campo] ?? "") === k).length;
+      add(G, `Linhas com ${ctl.contagem_campo} = ${k || "(vazio)"}`, num(esperado), num(n), esperado === n ? "ok" : "erro");
+    }
+  }
+  if (V.length) {
+    const G = "Regras do demonstrativo";
+    const sinal = V.filter(r => (r.operacao === "V" && r.vlrtot < 0) || ((r.operacao === "D" || r.operacao === "B") && r.vlrtot > 0)).length;
+    add(G, "Venda positiva; devolução e bonificação negativas", "0 exceções", num(sinal), sinal ? "erro" : "ok");
+    const fora = V.filter(r => r.dtmov.slice(0, 7) !== periodo).length;
+    add(G, "Data do movimento dentro do mês", "0 exceções", num(fora), fora ? "erro" : "ok");
+    const rvv = V.filter(r => r.ref_rvv && r.ref_rvv !== perLabel(periodo)).length;
+    add(G, "Ref. RVV igual ao mês", "0 exceções", num(rvv), rvv ? "aviso" : "ok", rvv ? "Itens com referência de outro mês continuam contando pela data do movimento." : "");
+    const pm = V.filter(r => r.preco_medio_rel != null && r.qtd_kg && Math.abs(r.vlrtot / r.qtd_kg - r.preco_medio_rel) > Math.max(0.011, r.preco_medio_rel * 0.01)).length;
+    add(G, "Preço médio = valor ÷ kg (tolerância 1%)", "0 exceções", num(pm), pm ? "aviso" : "ok", pm ? "O relatório mostra o preço unitário arredondado; diferenças acima de 1% em poucos itens." : "");
+    const st = V.filter(r => Math.abs(r.vlrtot + r.vlrsubst - r.vlrtot_st) > 0.011);
+    const stV = st.filter(r => r.operacao === "V").length;
+    const topsV = [...new Set(st.filter(r => r.operacao === "V").map(r => r.codtipoper))].join(", ");
+    add(G, "Valor com ST = valor + ST (vendas)", "0 exceções", num(stV), stV ? "aviso" : "ok", [stV ? `Vendas na TOP ${topsV} saem sem a ST no total.` : "", st.length - stV ? `Em ${num(st.length - stV)} devoluções/bonificações o relatório mostra a ST mas não a soma no total com ST.` : ""].filter(Boolean).join(" "));
+  }
+  if (M.length) {
+    const G = "Fórmulas do resumo de metas";
+    const conta = (f) => M.filter(f).length;
+    const regras = [
+      ["Valor Fat. Previsto = Meta × P.M. Meta", r => r.vlr_previsto_rel != null && !perto(r.qtd_meta * r.pm_meta, r.vlr_previsto_rel, 0.05)],
+      ["Diferença = Meta − Vendido", r => r.diferenca_rel != null && !perto(r.qtd_meta - r.qtd_vendida, r.diferenca_rel, 0.01)],
+      ["Prévia = Meta − Vendido − Fechado", r => r.previa_rel != null && !perto(r.qtd_meta - r.qtd_vendida - r.qtd_fechada, r.previa_rel, 0.01)],
+      ["P.M. Real = Valor Faturado ÷ Vendido", r => r.pm_real_rel != null && r.qtd_vendida !== 0 && !perto(r.vlr_faturado / r.qtd_vendida, r.pm_real_rel, 0.01)],
+      ["% Prev. = (Vendido + Fechado) ÷ Meta", r => r.perc_prev_rel != null && r.qtd_meta > 0 && !perto((r.qtd_vendida + r.qtd_fechada) / r.qtd_meta * 100, r.perc_prev_rel, 0.1)],
+      ["% Meta = Vendido ÷ Meta (zero se vendido negativo)", r => r.perc_meta_rel != null && r.qtd_meta > 0 && !perto(Math.max(0, r.qtd_vendida) / r.qtd_meta * 100, r.perc_meta_rel, 0.1)],
+    ];
+    for (const [nome, f] of regras) { const n = conta(f); add(G, nome, "0 exceções", num(n), n ? "erro" : "ok"); }
+    const semMeta = conta(r => r.qtd_meta === 0);
+    add(G, "Linhas sem meta (Meta = 0)", "", num(semMeta), "ok", semMeta ? "O relatório mostra 100% nessas linhas; o painel trata como 'sem meta'." : "");
+  }
+  if (V.length && M.length) {
+    const G = "Cruzamento resumo x demonstrativo";
+    const kgV = V.filter(r => REAL(r.operacao)).reduce((s, r) => s + r.qtd_kg, 0), kgM = M.reduce((s, r) => s + r.qtd_vendida, 0);
+    const vlV = V.filter(r => REAL(r.operacao)).reduce((s, r) => s + r.vlrtot, 0), vlM = M.reduce((s, r) => s + r.vlr_faturado, 0);
+    const dk = div(kgM - kgV, kgV), dv = div(vlM - vlV, vlV);
+    add(G, "Vendido kg (resumo) x vendas − devoluções (demonstrativo)", num(kgM, 1), num(kgV, 1), Math.abs(dk) < 0.005 ? "ok" : "aviso", `diferença ${pct(dk, 2)}`);
+    add(G, "Valor faturado (resumo) x vendas − devoluções (demonstrativo)", brl(vlM, 2), brl(vlV, 2), Math.abs(dv) < 0.005 ? "ok" : "aviso", `diferença ${pct(dv, 2)}`);
+    const vendV = new Set(V.map(r => r.vendedor)), faltaV = [...new Set(M.map(r => r.vendedor))].filter(v => !vendV.has(v));
+    add(G, "Vendedores do resumo que aparecem no demonstrativo", num(new Set(M.map(r => r.vendedor)).size), num(new Set(M.map(r => r.vendedor)).size - faltaV.length), faltaV.length ? "aviso" : "ok", faltaV.length ? `Sem venda no mês: ${faltaV.join(", ")}` : "");
+    const prodV = new Set(V.map(r => r.codprod)), faltaP = [...new Set(M.map(r => r.codprod))].filter(p => !prodV.has(p));
+    add(G, "Produtos com meta que aparecem no demonstrativo", num(new Set(M.map(r => r.codprod)).size), num(new Set(M.map(r => r.codprod)).size - faltaP.length), faltaP.length ? "aviso" : "ok", faltaP.length ? `${faltaP.length} produto(s) com meta sem venda no mês.` : "");
+    const itens = new Set(M.map(r => r.codreg + "|" + r.codprod)).size, dif = conciliacao(periodo).length;
+    add(G, "Itens região × produto que batem exatamente", num(itens), num(itens - dif), dif ? "aviso" : "ok", dif ? `${num(dif)} com diferença — detalhe na página Importar planilhas.` : "");
+  }
+  return out;
+}
+const ESTADO = { ok: ["good", "✔ Confere"], aviso: ["warn", "▲ Atenção"], erro: ["crit", "✖ Diverge"] };
+function telaValidacao() {
+  const rows = F.periodo ? validar(F.periodo) : [];
+  const n = e => rows.filter(r => r.estado === e).length;
+  const grupos = [...new Set(rows.map(r => r.grupo))];
+  $("p-validacao").innerHTML = `
+    <div class="kpis">
+      ${kpi("Verificações", num(rows.length), `período ${F.periodo ? perLabel(F.periodo) : "–"} · sem filtros de equipe`)}
+      ${kpi("Conferem", num(n("ok")), "valores idênticos aos da planilha")}
+      ${kpi("Atenção", num(n("aviso")), "diferenças esperadas ou explicadas")}
+      ${kpi("Divergem", num(n("erro")), n("erro") ? "precisa revisar" : "nenhuma divergência")}
+    </div>
+    <div class="card"><h3>Como a validação é feita</h3><div class="hint" style="margin:0;max-width:90ch">Cada planilha é relida célula a célula e seus totais (linhas, somas de cada coluna numérica, valores distintos) são comparados com os dados que o painel usa. Depois, as colunas calculadas do próprio relatório (% Meta, Prévia, P.M. Real...) são recalculadas linha a linha, e os dois relatórios são cruzados entre si. Tudo roda no navegador a cada abertura.</div></div>
+    ${grupos.map(g => `<div class="card"><h3>${esc(g)}</h3><div class="tbl" style="margin-top:10px"><table><thead><tr><th>Verificação</th><th class="n">Na planilha</th><th class="n">No painel</th><th>Resultado</th><th>Observação</th></tr></thead><tbody>
+      ${rows.filter(r => r.grupo === g).map(r => `<tr><td>${esc(r.item)}</td><td class="n">${esc(r.esperado)}</td><td class="n">${esc(r.obtido)}</td><td><span class="pill ${ESTADO[r.estado][0]}">${ESTADO[r.estado][1]}</span></td><td style="white-space:normal;min-width:240px;color:var(--ink-2)">${esc(r.obs)}</td></tr>`).join("")}
+    </tbody></table></div></div>`).join("") || `<div class="empty">Sem dados no período.</div>`}`;
 }
 
 function telaConciliacao() {
@@ -830,7 +1031,7 @@ async function baixar(nome, conteudo, tipo) {
 function telaBase() {
   const ps = periodos();
   $("p-base").innerHTML = `
-    <div class="card"><h3>O que está na base</h3><div class="hint">${EXEMPLO ? "Dados de exemplo — nada foi importado ainda." : PERSISTE ? "Guardado neste navegador. Continua aqui quando você reabrir a página." : "Este navegador não permitiu guardar os dados: eles ficam só até fechar a página."}</div>
+    <div class="card"><h3>O que está na base</h3><div class="hint">${EXEMPLO ? "Dados de exemplo — nada foi importado ainda." : EMB ? `Dados reais embutidos no painel em ${EMB.gerado_em}${DELTA.cargas.length ? `, mais ${DELTA.cargas.length} importação(ões) feitas neste navegador` : ""}.` : PERSISTE ? "Guardado neste navegador. Continua aqui quando você reabrir a página." : "Este navegador não permitiu guardar os dados: eles ficam só até fechar a página."}</div>
       <div class="tbl"><table><thead><tr><th>Período</th><th class="n">Itens de venda</th><th class="n">Linhas de meta</th></tr></thead><tbody>
       ${ps.map(p => `<tr><td>${perLabel(p)}</td><td class="n">${num(BASE.vendas[p]?.length || 0)}</td><td class="n">${num(BASE.metas[p]?.length || 0)}</td></tr>`).join("") || `<tr><td colspan="3" class="empty">Base vazia.</td></tr>`}
       </tbody></table></div></div>
@@ -841,9 +1042,9 @@ function telaBase() {
         <button class="btn ghost small" id="x-json">Base completa (JSON)</button>
         <button class="btn ghost small" id="i-json">Restaurar base (JSON)</button><input type="file" id="i-json-f" accept=".json" hidden>
         <span style="flex:1"></span>
-        <button class="btn ghost small" id="limpar" style="color:var(--crit-ink)">Apagar base</button>
+        <button class="btn ghost small" id="limpar" style="color:var(--crit-ink)">${EMB ? "Desfazer importações" : "Apagar base"}</button>
       </div>
-      <div id="limpar-ok" hidden style="margin-top:10px" class="msg info">Apagar todos os dados importados deste navegador? <button class="btn small" id="limpar-sim" style="background:var(--crit)">Apagar</button> <button class="btn ghost small" id="limpar-nao">Cancelar</button></div>
+      <div id="limpar-ok" hidden style="margin-top:10px" class="msg info">${EMB ? "Desfazer as importações feitas neste navegador? Os dados embutidos no painel continuam." : "Apagar todos os dados importados deste navegador?"} <button class="btn small" id="limpar-sim" style="background:var(--crit)">Apagar</button> <button class="btn ghost small" id="limpar-nao">Cancelar</button></div>
     </div>
     <div class="card"><h3>Histórico de importações</h3><div class="tbl" id="t-cargas"></div></div>`;
   tabela($("t-cargas"), [
@@ -858,12 +1059,12 @@ function telaBase() {
   $("i-json").onclick = () => $("i-json-f").click();
   $("i-json-f").onchange = async e => {
     const f = e.target.files[0]; if (!f) return;
-    try { const b = JSON.parse(await f.text()); if (!b.vendas || !b.metas || !b.cargas) throw 0; BASE = b; EXEMPLO = false; PERSISTE = await Store.set("base", BASE); iniciarFiltros(); render(); }
+    try { const b = JSON.parse(await f.text()); if (!b.vendas || !b.metas || !b.cargas) throw 0; DELTA = b; EXEMPLO = false; montarBase(); PERSISTE = await Store.set("delta", DELTA); iniciarFiltros(); render(); }
     catch (_) { $("limpar-ok").hidden = false; $("limpar-ok").className = "msg err"; $("limpar-ok").textContent = "Esse arquivo não é uma base exportada por este painel."; }
   };
   $("limpar").onclick = () => { $("limpar-ok").hidden = false; };
   $("limpar-nao").onclick = () => { $("limpar-ok").hidden = true; };
-  $("limpar-sim").onclick = async () => { BASE = { vendas: {}, metas: {}, cargas: [] }; await Store.set("base", BASE); carregarExemplo(); iniciarFiltros(); render(); };
+  $("limpar-sim").onclick = async () => { DELTA = { vendas: {}, metas: {}, cargas: [] }; await Store.set("delta", DELTA); EXEMPLO = false; montarBase(); if (!periodos().length) carregarExemplo(); iniciarFiltros(); render(); };
 }
 
 /* ===================================================================== filtros e navegação */
@@ -898,6 +1099,8 @@ const PAGINAS = {
   vendas: ["Vendas", "Faturamento líquido por cliente, produto, região e mais"],
   importar: ["Importar planilhas", "Atualize a base com os relatórios exportados do Sankhya"],
   base: ["Base de dados", "O que está guardado, histórico de importações e exportação"],
+  detalhe: ["Dados completos", "Todas as linhas e colunas do demonstrativo e do resumo de metas"],
+  validacao: ["Validação", "Conferência dos números do painel contra as planilhas originais"],
 };
 function irPara(t) {
   aba = t;
@@ -905,7 +1108,8 @@ function irPara(t) {
   $("pg-titulo").textContent = PAGINAS[t][0]; $("pg-sub").textContent = PAGINAS[t][1];
   $("app").classList.remove("open");
   document.querySelector(".filters").hidden = t === "importar" || t === "base";
-  for (const p of ["geral", "metas", "vendas", "importar", "base"]) $("p-" + p).hidden = p !== t;
+  document.querySelectorAll(".filters .field").forEach((f, i) => { f.hidden = t === "validacao" && i > 0; });
+  for (const p of ["geral", "metas", "vendas", "detalhe", "validacao", "importar", "base"]) $("p-" + p).hidden = p !== t;
   try { localStorage.setItem("vm-aba", t); } catch (_) {}
   render();
 }
@@ -937,6 +1141,7 @@ function statusBase() {
 function render() {
   hideTip();
   statusBase();
+  if (F.periodo && !EXEMPLO) { const v = validar(F.periodo), e = v.filter(r => r.estado === "erro").length; $("n-valid").textContent = e ? `${e} ✖` : "✔"; $("n-valid").style.color = e ? "var(--crit-ink)" : "var(--good-ink)"; } else $("n-valid").textContent = "–";
   $("banner").hidden = !EXEMPLO;
   const vazio = !F.periodo;
   if (vazio) { $("meta-line").textContent = ""; }
@@ -944,6 +1149,8 @@ function render() {
   if (aba === "metas" && !vazio) telaMetas();
   if (aba === "vendas" && !vazio) telaVendas();
   if (aba === "importar") telaConciliacao();
+  if (aba === "detalhe" && !vazio) telaDetalhe();
+  if (aba === "validacao") telaValidacao();
   if (aba === "base") telaBase();
 }
 
@@ -1018,11 +1225,13 @@ function carregarExemplo() {
 /* ===================================================================== início */
 (async () => {
   await Store.open();
-  const salvo = await Store.get("base");
-  if (salvo && (Object.keys(salvo.vendas || {}).length || Object.keys(salvo.metas || {}).length)) BASE = salvo;
-  else carregarExemplo();
+  EMB = lerEmbutidos();
+  const salvo = await Store.get("delta");
+  if (salvo && salvo.vendas && salvo.metas && salvo.cargas) DELTA = salvo;
+  montarBase();
+  if (!periodos().length) carregarExemplo();
   iniciarFiltros();
   let a = "geral"; try { a = localStorage.getItem("vm-aba") || "geral"; } catch (_) {}
-  irPara(["geral", "metas", "vendas", "importar", "base"].includes(a) ? a : "geral");
+  irPara(["geral", "metas", "vendas", "detalhe", "validacao", "importar", "base"].includes(a) ? a : "geral");
 })();
 </script>

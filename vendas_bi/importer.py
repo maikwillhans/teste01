@@ -136,11 +136,12 @@ def _separar_regiao(serie: pd.Series) -> tuple[pd.Series, pd.Series]:
     return cod, nome
 
 
-def ler_relatorio(origem, nome: str, periodo_meta: str | None = None) -> Relatorio:
+def ler_relatorio(origem, nome: str, periodo_meta: str | None = None, todas: bool = False) -> Relatorio:
     """Lê e normaliza um relatório. ``origem`` = caminho, bytes ou arquivo aberto.
 
     ``periodo_meta`` (AAAA-MM) define o mês das metas; se omitido usa o mês da
     data de emissão do relatório, já que o resumo de metas não traz o período.
+    ``todas`` mantém também as colunas calculadas do relatório (``*_rel``).
     """
     bruto = _ler_bruto(origem, nome)
     tipo, linha_cab = _achar_cabecalho(bruto)
@@ -185,7 +186,8 @@ def ler_relatorio(origem, nome: str, periodo_meta: str | None = None) -> Relator
     if saida.empty:
         raise ErroImportacao("Nenhuma linha de dados encontrada no relatório.")
 
-    return Relatorio(tipo, saida[COLUNAS_FATO[tipo]].reset_index(drop=True), emitido, usuario, avisos)
+    colunas = COLUNAS_FATO[tipo] + ([c for c in saida.columns if c.endswith("_rel")] if todas else [])
+    return Relatorio(tipo, saida[colunas].reset_index(drop=True), emitido, usuario, avisos)
 
 
 # --------------------------------------------------------------------- gravação

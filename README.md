@@ -21,6 +21,18 @@ só precisa de internet na primeira abertura para carregar o leitor de planilhas
 
 Enquanto nada é importado, o painel mostra dados de exemplo fictícios, com um aviso no topo.
 
+### Painel já com os dados reais
+
+```bash
+python scripts/gerar_dashboard.py data/Demonstrativo*.xls data/RESUMO*.xls
+```
+
+Gera `data/painel_vendas_metas.html` com as planilhas embutidas (fica fora do git, pois tem dados
+de clientes). A página **Validação** confere o painel contra as planilhas originais: linhas,
+somas de cada coluna numérica, valores distintos, fórmulas do resumo de metas linha a linha e o
+cruzamento entre os dois relatórios. A página **Dados completos** mostra todas as linhas e
+colunas das duas planilhas, com busca e exportação.
+
 ## Versão em Python (opcional)
 
 A mesma base em SQLite com dashboard Streamlit, útil para rodar num servidor ou agendar cargas:

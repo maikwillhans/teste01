@@ -45,7 +45,8 @@ LAYOUTS = {
             "Qtde Kg": ("qtd_kg", "float", "TGFITE.QTDNEG x peso (TGFPRO.PESOLIQ)"),
             "Valor Total Produto": ("vlrtot", "float", "TGFITE.VLRTOT"),
             "Data Mvto": ("dtmov", "date", "TGFCAB.DTMOV"),
-            "Preço Médio": (None, "float", "derivado: vlrtot / qtd_kg"),
+            # lido só para validação (a base recalcula vlrtot / qtd_kg)
+            "Preço Médio": ("preco_medio_rel", "float", "derivado: vlrtot / qtd_kg"),
             "Valor Total Com ST": ("vlrtot_st", "float", "TGFITE.VLRTOT + VLRSUBST"),
             "Valor ST": ("vlrsubst", "float", "TGFITE.VLRSUBST"),
             "Linha": ("linha", "str", "campo adicional do produto (AD_LINHA)"),
@@ -84,14 +85,15 @@ LAYOUTS = {
             "Fechado": ("qtd_fechada", "float", "pedidos em carteira, kg (TGFCAB TIPMOV=P pendente)"),
             "Valor Fechado": ("vlr_fechado", "float", "pedidos em carteira, R$"),
             "P.M. Meta": ("pm_meta", "float", "preço médio da meta (R$/kg)"),
-            # Os campos abaixo são calculados; a base recalcula na view vw_meta.
-            "% Meta": (None, "float", "derivado: qtd_vendida / qtd_meta"),
-            "% Prev.": (None, "float", "derivado: (qtd_vendida + qtd_fechada) / qtd_meta"),
-            "Diferença": (None, "float", "derivado: qtd_meta - qtd_vendida"),
-            "P.M. Real.": (None, "float", "derivado: vlr_faturado / qtd_vendida"),
-            "Prévia": (None, "float", "derivado: qtd_meta - qtd_vendida - qtd_fechada"),
+            # Os campos abaixo são calculados. O valor do relatório é lido como *_rel
+            # só para validação; a base recalcula na view vw_meta.
+            "% Meta": ("perc_meta_rel", "float", "derivado: qtd_vendida / qtd_meta"),
+            "% Prev.": ("perc_prev_rel", "float", "derivado: (qtd_vendida + qtd_fechada) / qtd_meta"),
+            "Diferença": ("diferenca_rel", "float", "derivado: qtd_meta - qtd_vendida"),
+            "P.M. Real.": ("pm_real_rel", "float", "derivado: vlr_faturado / qtd_vendida"),
+            "Prévia": ("previa_rel", "float", "derivado: qtd_meta - qtd_vendida - qtd_fechada"),
             "Valor Faturado": ("vlr_faturado", "float", "realizado em R$"),
-            "Valor Fat. Previsto": (None, "float", "derivado: qtd_meta * pm_meta"),
+            "Valor Fat. Previsto": ("vlr_previsto_rel", "float", "derivado: qtd_meta * pm_meta"),
         },
         "obrigatorias": ["Vendedor", "Cód.", "Meta", "Vendido"],
     },
