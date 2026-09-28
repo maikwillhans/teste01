@@ -94,6 +94,15 @@ Dicionário de Dados (tabela TDDCAM) antes da fase 2.
   upload). Na fase 2 ambos vêm direto da TGFMET.
 - Vendedores com meta e sem venda no mês: JAIRO SOUSA, MARIA HELENA.
 
+## Diagnóstico do banco (Oracle, 28/09/2026)
+
+Resultado em `diagnostico/resultado_1_tabelas_e_campos.csv`: das 23 tabelas e 143 campos
+verificados, 142 existem. Só falta `TGFMET.VLRPREV` (valor da meta); o campo de valor
+equivalente é levantado pela consulta `diagnostico/4_metas_tgfmet.sql`. Estão disponíveis custo
+(TGFITE.CUSTO, TGFCUS), impostos (TGFDIN), financeiro (TGFFIN), estoque com lote e validade
+(TGFEST), vínculo pedido → nota (TGFVAR), ordens de carga (TGFORD) e tabelas de preço
+(TGFTAB/TGFEXC).
+
 ## Checklist para o TI antes da fase 2
 
 1. Criar usuário de integração com acesso de leitura e liberar a API

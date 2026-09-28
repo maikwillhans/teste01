@@ -4,7 +4,7 @@
 -- ATENÇÃO: MODELO para validar com o TI/consultor Sankhya. O resumo atual
 -- provavelmente é um relatório personalizado; copie a SQL dele e ajuste os
 -- "AS". Referência dos objetos padrão:
---   TGFMET  -> metas (CODMETA, DTREF, CODVEND, CODPROD, QTDPREV, VLRPREV...)
+--   TGFMET  -> metas (CODMETA, DTREF, CODVEND, CODPROD, QTDPREV; sem VLRPREV nesta base)
 --   TGFCAB/TGFITE com TIPMOV = 'P' e PENDENTE = 'S' -> carteira ("Fechado")
 --   TGFCAB/TGFITE com TIPMOV IN ('V','D')          -> realizado ("Vendido")
 -- Parâmetros: :DTINI e :DTFIM (primeiro e último dia do mês).
@@ -44,7 +44,7 @@ SELECT
     MET.CODPROD                                 AS codprod,
     PRO.DESCRPROD                               AS descrprod,
     MET.QTDPREV                                 AS qtd_meta,
-    CASE WHEN MET.QTDPREV > 0 THEN MET.VLRPREV / MET.QTDPREV ELSE 0 END AS pm_meta,
+    0 AS pm_meta,   -- TGFMET não tem VLRPREV nesta base: definir o campo de valor pela consulta diagnostico/4_metas_tgfmet.sql
     NVL(R.QTD, 0)                               AS qtd_vendida,
     NVL(R.VLR, 0)                               AS vlr_faturado,
     NVL(C.QTD, 0)                               AS qtd_fechada,
