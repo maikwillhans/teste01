@@ -1,0 +1,27 @@
+-- Onde estão as metas do "Resumo Geral das Metas/Vendas" (Oracle). SOMENTE LEITURA.
+-- A TGFMET tem ~2.800 a 3.500 linhas por mês, mas com QTDPREV = 0, um único vendedor e um
+-- único produto: ela não é a origem do resumo (que soma 4.813.683 kg de meta em 09/2026).
+-- Rode cada consulta separadamente e exporte cada resultado.
+
+-- 5.1 Tabelas e views com "META" no nome (inclui tabelas personalizadas AD_)
+SELECT OWNER, TABLE_NAME AS OBJETO, 'TABELA' AS TIPO, NUM_ROWS AS LINHAS_APROX
+FROM ALL_TABLES WHERE TABLE_NAME LIKE '%META%' OR TABLE_NAME LIKE '%MET%'
+UNION ALL
+SELECT OWNER, VIEW_NAME, 'VIEW', NULL FROM ALL_VIEWS WHERE VIEW_NAME LIKE '%META%'
+ORDER BY 2;
+
+-- 5.2 Tabelas e campos do dicionário do Sankhya que falam de meta
+SELECT T.NOMETAB AS TABELA, T.DESCRTAB AS DESCRICAO_TABELA, C.NOMECAMPO AS CAMPO, C.DESCRCAMPO AS DESCRICAO_CAMPO
+FROM TDDCAM C JOIN TDDTAB T ON T.NOMETAB = C.NOMETAB
+WHERE UPPER(C.DESCRCAMPO) LIKE '%META%' OR UPPER(T.DESCRTAB) LIKE '%META%'
+ORDER BY 1, 3;
+
+-- 5.3 Amostra da TGFMET em setembro/2026 (todas as colunas, 30 linhas)
+SELECT * FROM TGFMET
+WHERE DTREF >= DATE '2026-09-01' AND DTREF < DATE '2026-10-01' AND ROWNUM <= 30;
+
+-- 5.4 O que varia na TGFMET em setembro/2026
+SELECT COUNT(*) AS LINHAS, COUNT(DISTINCT CODMETA) AS METAS, COUNT(DISTINCT CODPARC) AS PARCEIROS,
+       COUNT(DISTINCT CODGRUPOPROD) AS GRUPOS, MIN(CODVEND) AS CODVEND, MIN(CODPROD) AS CODPROD
+FROM TGFMET
+WHERE DTREF >= DATE '2026-09-01' AND DTREF < DATE '2026-10-01';
