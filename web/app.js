@@ -609,12 +609,15 @@ const situacaoPrevisto = p => p == null ? "none" : p >= 1 ? "good" : p >= 0.9 ? 
 const STATUS_PREV = { good: ["✔", "No previsto"], warn: ["▲", "Perto do previsto"], crit: ["✖", "Abaixo do previsto"], none: ["–", "Sem meta"] };
 const pillPrev = s => `<span class="pill ${s}">${STATUS_PREV[s][0]} ${STATUS_PREV[s][1]}</span>`;
 
+const periodoFoco = () => S.periodo || new Date().toISOString().slice(0, 7);
+
 async function telaFoco(el) {
-  if (!S.periodo) { el.innerHTML = semPeriodo(); return; }
-  if (estFoco.periodo !== S.periodo) { estFoco.periodo = S.periodo; estFoco.dia = ""; }
-  const f = await api("GET", "/api/foco?" + qs({ periodo: S.periodo, dia: estFoco.dia }));
+  const PF = periodoFoco();
+  if (estFoco.periodo !== PF) { estFoco.periodo = PF; estFoco.dia = ""; }
+  const f = await api("GET", "/api/foco?" + qs({ periodo: PF, dia: estFoco.dia }));
   if (!f.itens.length) {
-    el.innerHTML = `<section class="panel"><div class="card"><h3>Nenhum item foco em ${perLabel(S.periodo)}</h3>
+    el.innerHTML = `<section class="panel"><div class="card"><h3>Nenhum item foco em ${perLabel(PF)}</h3>
+      ${S.periodo ? "" : `<div class="note" style="margin-bottom:10px">Ainda não há vendas na base. Você já pode escolher os itens e as metas; os números aparecem quando importar o Demonstrativo e o Resumo de Metas do mês.</div>`}
       <div class="hint">Escolha os produtos que vão ser acompanhados de perto no mês e, se quiser, uma meta própria para cada um. Sem meta própria, vale a soma das metas do produto no resumo de metas.</div>
       <div class="toolbar"><button class="btn" id="fc">Escolher itens foco</button></div></div></section>`;
     $("fc").onclick = () => formFoco(); return;
@@ -679,10 +682,11 @@ function bulletFoco(itens) {
 }
 
 async function formFoco() {
-  const [cfg] = await Promise.all([api("GET", `/api/foco/config?periodo=${S.periodo}`), opcoesCad("produtos")]);
+  const PF = periodoFoco();
+  const [cfg] = await Promise.all([api("GET", `/api/foco/config?periodo=${PF}`), opcoesCad("produtos")]);
   let itens = cfg.itens;
   if (!itens.length) {   // começa pelos itens do mês anterior, ou pelos sugeridos
-    const [a, m] = S.periodo.split("-").map(Number), ant = `${m === 1 ? a - 1 : a}-${String(m === 1 ? 12 : m - 1).padStart(2, "0")}`;
+    const [a, m] = PF.split("-").map(Number), ant = `${m === 1 ? a - 1 : a}-${String(m === 1 ? 12 : m - 1).padStart(2, "0")}`;
     const prev = (await api("GET", `/api/foco/config?periodo=${ant}`)).itens;
     itens = prev.length ? prev.map(i => ({ codprod: i.codprod, descrprod: i.descrprod, meta_kg: i.meta_kg }))
                         : cfg.sugeridos.map(c => ({ codprod: c, descrprod: nomeDe("produtos", c) }));
@@ -692,7 +696,7 @@ async function formFoco() {
     <td class="cell n" style="width:170px"><input data-k="meta_kg" inputmode="decimal" value="${i.meta_kg != null ? num(i.meta_kg, 0) : ""}" placeholder="${i.meta_resumo ? "resumo: " + num(i.meta_resumo) : "do resumo"}"></td>
     <td><button class="btn link" data-rm title="Remover">✕</button></td></tr>`;
   const d = gaveta({
-    titulo: `Itens foco de ${perLabel(S.periodo)}`, sub: "Produtos acompanhados no mês e a meta de cada um (kg)",
+    titulo: `Itens foco de ${perLabel(PF)}`, sub: "Produtos acompanhados no mês e a meta de cada um (kg)",
     corpo: `<div class="itens"><table><thead><tr><th>Produto</th><th class="n">Meta do mês (kg)</th><th></th></tr></thead><tbody id="f-itens">${itens.map(linha).join("")}</tbody></table></div>
       <datalist id="fprod-l">${CACHE.produtos.map(o => `<option value="${esc(o.codigo + " — " + o.nome)}">`).join("")}</datalist>
       <div class="toolbar"><button class="btn ghost small" id="f-add">+ Adicionar item</button></div>
@@ -703,7 +707,7 @@ async function formFoco() {
         if (!p.value.trim()) return null;
         return { codprod: lerLookup(p), meta_kg: m.value.trim() || null };
       }).filter(Boolean);
-      await api("PUT", "/api/foco/config", { periodo: S.periodo, itens: lista });
+      await api("PUT", "/api/foco/config", { periodo: PF, itens: lista });
       toast("Itens foco salvos."); render();
     },
   });
@@ -713,11 +717,12 @@ async function formFoco() {
 }
 
 async function verSqlFoco() {
-  const sql = await (await fetch(`/api/foco/sql?periodo=${S.periodo}`)).text();
+  const PF = periodoFoco();
+  const sql = await (await fetch(`/api/foco/sql?periodo=${PF}`)).text();
   const d = gaveta({
     titulo: "SELECT para o Sankhya (Oracle)", sub: "Gerada com os itens e metas configurados · somente leitura",
     corpo: `<div class="note">Rode cada consulta (A, B, C, D) separadamente no DbExplorer. <b>A</b>: acompanhamento por item · <b>B</b>: por vendedor · <b>C</b>: pedidos do mês, para importar aqui em Dados › Importar planilhas · <b>D</b>: conferência de setembro/2026.</div>
-      <div class="toolbar"><button class="btn small" id="sql-copiar">Copiar SELECT</button><a class="btn ghost small" href="/api/foco/sql?periodo=${S.periodo}" download="itens_foco_${S.periodo}.sql">Baixar .sql</a></div>
+      <div class="toolbar"><button class="btn small" id="sql-copiar">Copiar SELECT</button><a class="btn ghost small" href="/api/foco/sql?periodo=${PF}" download="itens_foco_${PF}.sql">Baixar .sql</a></div>
       <pre style="white-space:pre;overflow:auto;max-height:60vh;background:var(--surface-2);border-radius:10px;padding:12px;font-size:12px;margin:0">${esc(sql)}</pre>`,
   });
   d.querySelector("#sql-copiar").onclick = async () => {

@@ -538,7 +538,7 @@ def foco_config(conn, periodo: str) -> list[dict]:
 def salvar_foco_config(conn, periodo: str, itens: list[dict]) -> list[dict]:
     """Substitui a lista de itens foco do mês. meta_kg vazio = usar a meta do resumo."""
     _periodo_valido(periodo)
-    linhas, vistos = [], set()
+    linhas, vistos, novos_produtos = [], set(), []
     for n, it in enumerate(itens or [], 1):
         codprod = _converter_campo(it.get("codprod"), "int", f"Item {n}: produto")
         if codprod is None:
@@ -546,13 +546,16 @@ def salvar_foco_config(conn, periodo: str, itens: list[dict]) -> list[dict]:
         if codprod in vistos:
             raise ErroValidacao(f"Produto {codprod} aparece duas vezes.")
         if not _existe(conn, "produtos", codprod):
-            raise ErroValidacao(f"Item {n}: produto {codprod} não cadastrado.")
+            novos_produtos.append(codprod)
         meta = _converter_campo(it.get("meta_kg"), "float", f"Item {n}: meta")
         if meta is not None and meta < 0:
             raise ErroValidacao(f"Item {n}: meta não pode ser negativa.")
         vistos.add(codprod)
         linhas.append((periodo, codprod, meta, n))
     with conn:
+        # produto ainda não importado: entra no cadastro com nome provisório (a importação completa depois)
+        conn.executemany("INSERT INTO produto (codprod, descrprod) VALUES (?, ?)",
+                         [(c, f"PRODUTO {c} (aguardando importação)") for c in novos_produtos])
         conn.execute("DELETE FROM item_foco WHERE periodo = ?", (periodo,))
         conn.executemany("INSERT INTO item_foco (periodo, codprod, meta_kg, ordem) VALUES (?,?,?,?)", linhas)
     return foco_config(conn, periodo)

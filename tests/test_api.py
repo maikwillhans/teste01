@@ -126,3 +126,16 @@ def test_itens_foco_meta_previsto_realizado_e_pedidos(api):
     assert len(api.post("/api/foco/copiar", json={"de": "2026-09", "para": "2026-10"}).json()) == 2
     v = [x for x in api.get("/api/validacao", params={"periodo": "2026-09"}).json() if x["grupo"].startswith("Importação de pedidos")]
     assert v and all(x["estado"] == "ok" for x in v)
+
+
+def test_itens_foco_com_base_vazia(tmp_path):
+    api = TestClient(criar_app(tmp_path / "vazio.db"))
+    r = api.put("/api/foco/config", json={"periodo": "2026-10", "itens": [{"codprod": 949}, {"codprod": 871, "meta_kg": 500}]})
+    assert r.status_code == 200, r.text
+    assert r.json()[0]["descrprod"] == "PRODUTO 949 (aguardando importação)"
+    f = api.get("/api/foco", params={"periodo": "2026-10"}).json()
+    assert [i["realizado_kg"] for i in f["itens"]] == [0, 0] and f["itens"][1]["meta_kg"] == 500
+    # o nome real chega com a importação
+    r = api.post("/api/importar", files={"arquivo": ("m.xlsx", _planilha(METAS, [_meta(**{"Cód.": 949, "Produto": "LINGUICA TOSCANA 5 KG"})]))})
+    assert r.status_code == 200, r.text
+    assert api.get("/api/foco/config", params={"periodo": "2026-10"}).json()["itens"][0]["descrprod"] == "LINGUICA TOSCANA 5 KG"

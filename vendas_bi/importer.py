@@ -364,7 +364,8 @@ def _gravar_metas(conn, df: pd.DataFrame, carga_id: int, origem: str) -> int:
             prox += 1
     for codprod, descr, cat in df.drop_duplicates("codprod")[["codprod", "descrprod", "categoria"]].itertuples(index=False):
         conn.execute("INSERT INTO produto (codprod, descrprod, categoria) VALUES (?,?,?) "
-                     "ON CONFLICT(codprod) DO UPDATE SET categoria = COALESCE(excluded.categoria, categoria)",
+                     "ON CONFLICT(codprod) DO UPDATE SET categoria = COALESCE(excluded.categoria, categoria), "
+                     "descrprod = CASE WHEN descrprod LIKE '%(aguardando importação)' THEN excluded.descrprod ELSE descrprod END",
                      (int(codprod), descr, cat))
 
     periodos = sorted(df["periodo"].unique())
