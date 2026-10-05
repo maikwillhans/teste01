@@ -792,6 +792,7 @@ aplicarTema(temaSalvo);
 (async () => {
   try { await carregarInicio(); }
   catch (e) { $("conteudo").innerHTML = `<div class="msg err">Não foi possível falar com o servidor do sistema. Ele está rodando? (${esc(e.message)})</div>`; return; }
+  $("versao").textContent = `Versão ${S.inicio.versao || "?"}`;
   $("nav-cadastros").innerHTML = Object.entries(S.inicio.cadastros).map(([k, c]) =>
     `<button class="tab" data-tab="${k}"><svg class="i" viewBox="0 0 24 24">${ICONE_CAD[k] || ""}</svg>${esc({ tops: "TOPs" }[k] || c.titulo)}<span class="count" id="n-${k}">0</span></button>`).join("");
   document.querySelectorAll(".tab").forEach(b => b.onclick = () => ir(b.dataset.tab));

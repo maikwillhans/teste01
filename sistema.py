@@ -43,6 +43,20 @@ if args.banco:
 
 from vendas_bi.api import criar_app  # noqa: E402  (depois de definir o banco)
 
+from vendas_bi import VERSAO  # noqa: E402
+
+# Porta ocupada quase sempre é outra janela do sistema (por exemplo, a versão antiga) ainda aberta.
+with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as teste:
+    try:
+        teste.bind(("0.0.0.0" if args.host == "0.0.0.0" else args.host, args.porta))
+    except OSError:
+        print()
+        print(f"  A porta {args.porta} já está em uso: o sistema (talvez uma versão antiga) já está aberto em outra janela.")
+        print("  Feche as outras janelas pretas do sistema e inicie de novo.")
+        print()
+        raise SystemExit(1)
+
+print(f"  Sistema Vendas x Metas - versão {VERSAO}")
 app = criar_app(args.banco)
 if not args.sem_navegador:
     webbrowser.open(f"http://localhost:{args.porta}")

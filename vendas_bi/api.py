@@ -9,6 +9,7 @@ from fastapi import FastAPI, File, Form, HTTPException, Query, Request, UploadFi
 from fastapi.responses import FileResponse, JSONResponse, Response
 from fastapi.staticfiles import StaticFiles
 
+from . import VERSAO
 from . import consultas as q
 from . import servicos as s
 from .db import BANCO_PADRAO, conectar
@@ -18,9 +19,17 @@ WEB = Path(__file__).resolve().parent.parent / "web"
 
 
 def criar_app(caminho_banco: str | Path | None = None) -> FastAPI:
-    app = FastAPI(title="Vendas x Metas", version="1.0")
+    app = FastAPI(title="Vendas x Metas", version=VERSAO)
     conn = conectar(caminho_banco)
     app.state.conn = conn
+
+    @app.middleware("http")
+    async def _sem_cache(request: Request, call_next):
+        """Telas sempre revalidadas: depois de atualizar o sistema o navegador não mostra a versão antiga."""
+        resp = await call_next(request)
+        if not request.url.path.startswith("/api/"):
+            resp.headers["Cache-Control"] = "no-cache, must-revalidate"
+        return resp
 
     @app.exception_handler(s.ErroValidacao)
     async def _erro_validacao(_: Request, e: s.ErroValidacao):
@@ -48,6 +57,7 @@ def criar_app(caminho_banco: str | Path | None = None) -> FastAPI:
                           "vendedores": n("vendedor"), "clientes": n("parceiro"), "produtos": n("produto"),
                           "regioes": n("regiao"), "tops": n("tipo_operacao"), "empresas": n("empresa")},
             "banco": str(BANCO_PADRAO if caminho_banco is None else caminho_banco),
+            "versao": VERSAO,
         }
 
     @app.get("/api/opcoes")
