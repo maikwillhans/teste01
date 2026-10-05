@@ -201,7 +201,7 @@ function ritmoEsperado(periodo, ultima) {
   return total ? feitos / total : 0;
 }
 const filtroQS = () => qs({ periodo: S.periodo, gerente: S.gerente, supervisor: S.supervisor, vendedor: S.vendedor });
-const semPeriodo = () => `<div class="card"><h3>Nenhum dado ainda</h3><div class="hint">Importe as planilhas do Sankhya em <b>Dados › Importar planilhas</b> ou lance notas e metas manualmente em <b>Lançamentos</b>.</div><div class="toolbar"><button class="btn" onclick="ir('importar')">Importar planilhas</button><button class="btn ghost" onclick="ir('notas')">Lançar nota</button></div></div>`;
+const semPeriodo = () => `<div class="card"><h3>A base está vazia</h3><div class="hint" style="max-width:80ch">Os dados do sistema ficam no arquivo <b>data/sistema.db</b>, dentro da pasta do sistema. Para começar (ou recomeçar), importe em <b>Dados › Importar planilhas</b> o Demonstrativo e o Resumo de Metas de cada mês, os dois juntos. Também dá para lançar notas e metas à mão em <b>Lançamentos</b>.</div><div class="toolbar"><button class="btn" onclick="ir('importar')">Importar planilhas</button><button class="btn ghost" onclick="ir('notas')">Lançar nota</button></div></div>`;
 
 /* ============================================================ análise */
 async function telaGeral(el) {
