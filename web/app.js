@@ -206,7 +206,7 @@ const semPeriodo = () => `<div class="card"><h3>A base está vazia</h3><div clas
 /* ============================================================ análise */
 async function telaGeral(el) {
   if (!S.periodo) { el.innerHTML = semPeriodo(); return; }
-  const d = await api("GET", "/api/painel?" + filtroQS()), k = d.indicadores;
+  const [d, foco] = await Promise.all([api("GET", "/api/painel?" + filtroQS()), api("GET", `/api/foco?periodo=${S.periodo}`)]), k = d.indicadores;
   ESPERADO = ritmoEsperado(S.periodo, k.ultima_data);
   const meter = (perc, prev) => perc == null ? "" : `<div class="meter"><i class="soft" style="width:${Math.min(100, (prev ?? perc) * 100)}%"></i><i style="width:${Math.min(100, perc * 100)}%"></i><s style="left:${Math.min(100, ESPERADO * 100)}%"></s></div>`;
   el.innerHTML = `
@@ -221,6 +221,10 @@ async function telaGeral(el) {
       ${kpi("Clientes positivados", num(k.clientes), `${num(k.notas)} notas · ticket ${brlC(k.ticket_medio)}`)}
       ${kpi("Devoluções", brlC(k.devolucao), `${pct(k.perc_devolucao)} da venda bruta · bonificação ${brlC(k.bonificacao)}`)}
     </div>
+    <div class="card"><div class="toolbar" style="margin-bottom:4px"><h3 style="flex:1">Itens foco do mês</h3><button class="btn ghost small" onclick="ir('foco')">${foco.itens.length ? "Abrir acompanhamento" : "Escolher itens foco"}</button></div>
+      ${foco.itens.length
+        ? `<div class="hint">${num(foco.itens.length)} produtos · realizado ${ton(foco.totais.realizado_kg)} de ${ton(foco.totais.meta_kg)} (${pct(foco.totais.perc_meta)}) · previsto até ${dataBR(foco.dia)}: ${ton(foco.totais.previsto_kg)} · pedidos no dia: ${num(foco.totais.pedidos_dia)}</div>${bulletFoco(foco.itens)}`
+        : `<div class="hint" style="margin:0">Nenhum item foco escolhido para ${perLabel(S.periodo)}. Clique em "Escolher itens foco" para acompanhar meta, previsto, realizado e pedidos do dia dos produtos em foco.</div>`}</div>
     <div class="grid2">
       <div class="card chart"><h3>Faturamento por dia</h3><div class="hint">R$ líquido por data de movimento</div>${svgBarras(d.diarias)}</div>
       <div class="card chart"><h3>Faturamento acumulado x meta</h3><div class="hint">R$ acumulados no mês; linha tracejada = meta em R$</div>${svgAcumulado(d.diarias, k.meta_valor)}</div>

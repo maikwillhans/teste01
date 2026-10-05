@@ -244,6 +244,7 @@ tbody tr:hover td { background: var(--surface-2); }
       <button class="tab" data-tab="geral"><svg class="i" viewBox="0 0 24 24"><rect x="3" y="3" width="7" height="9" rx="1.5"/><rect x="14" y="3" width="7" height="5" rx="1.5"/><rect x="14" y="12" width="7" height="9" rx="1.5"/><rect x="3" y="16" width="7" height="5" rx="1.5"/></svg>Visão geral</button>
       <button class="tab" data-tab="metas"><svg class="i" viewBox="0 0 24 24"><circle cx="12" cy="12" r="9"/><circle cx="12" cy="12" r="5"/><circle cx="12" cy="12" r="1"/></svg>Metas</button>
       <button class="tab" data-tab="vendas"><svg class="i" viewBox="0 0 24 24"><path d="M4 20V10"/><path d="M10 20V4"/><path d="M16 20v-7"/><path d="M22 20H2"/></svg>Vendas</button>
+      <button class="tab" data-tab="foco"><svg class="i" viewBox="0 0 24 24"><path d="m12 3 2.8 5.7 6.2.9-4.5 4.4 1.1 6.2L12 17.3 6.4 20.2l1.1-6.2L3 9.6l6.2-.9z"/></svg>Itens foco</button>
     </nav>
     <div class="nav-label">Dados</div>
     <nav class="nav">
@@ -287,6 +288,7 @@ tbody tr:hover td { background: var(--surface-2); }
   <section class="panel" id="p-geral"></section>
   <section class="panel" id="p-metas" hidden></section>
   <section class="panel" id="p-vendas" hidden></section>
+  <section class="panel" id="p-foco" hidden></section>
 
   <section class="panel" id="p-importar" hidden>
     <div class="drop" id="drop" tabindex="0" role="button" aria-label="Escolher planilhas">
@@ -789,6 +791,9 @@ function telaGeral() {
       <div class="card"><h3>Meta por supervisor</h3><div class="hint">Vendido e carteira em kg contra a meta</div>${bullet(metaPor("supervisor"))}</div>
       <div class="card"><h3>Meta por categoria</h3><div class="hint">Vendido e carteira em kg contra a meta</div>${bullet(metaPor("categoria"))}</div>
     </div>
+    <div class="card"><div class="controls" style="margin-bottom:4px"><h3 style="flex:1">Itens foco do mês</h3><button class="btn ghost small" data-goto="foco">Abrir acompanhamento</button></div>
+      ${(() => { const fo = calcFoco(); return `<div class="hint">${fo.itens.length} produtos · realizado ${ton(fo.tot.realizado)} de ${ton(fo.tot.meta)} (${pct(div(fo.tot.realizado, fo.tot.meta))}) · previsto até ${fo.dia ? fo.dia.split("-").reverse().join("/") : "–"}: ${ton(fo.tot.previsto)}</div>${bulletFoco(fo.itens)}`; })()}
+    </div>
     <div class="grid2">
       <div class="card"><h3>Maiores clientes</h3><div class="hint">Faturamento líquido, R$</div>${ranking(vendasPor("nomeparc"), 10)}</div>
       <div class="card"><h3>Produtos mais vendidos</h3><div class="hint">Faturamento líquido, R$</div>${ranking(vendasPor("descrprod"), 10)}</div>
@@ -798,6 +803,7 @@ function telaGeral() {
       <div class="card"><h3>Por UF</h3><div class="hint">Faturamento líquido, R$</div>${ranking(vendasPor("uf"), 10)}</div>
     </div>`;
   bindTips($("p-geral"));
+  $("p-geral").querySelectorAll("[data-goto]").forEach(b => b.onclick = () => irPara(b.dataset.goto));
 }
 
 const DIM_META = { vendedor: "Vendedor", supervisor: "Supervisor", gerente: "Gerente", categoria: "Categoria", descrprod: "Produto", nomereg: "Região" };
@@ -1067,6 +1073,95 @@ function telaBase() {
   $("limpar-sim").onclick = async () => { DELTA = { vendas: {}, metas: {}, cargas: [] }; await Store.set("delta", DELTA); EXEMPLO = false; montarBase(); if (!periodos().length) carregarExemplo(); iniciarFiltros(); render(); };
 }
 
+/* ===================================================================== itens foco */
+const FOCO_PADRAO = [90346, 871, 32537, 3465, 949, 85847, 11145];
+function focoConfig(p) {
+  try { const c = JSON.parse(localStorage.getItem("vm-foco-" + p)); if (Array.isArray(c) && c.length) return c; } catch (_) {}
+  return FOCO_PADRAO.map(c => ({ codprod: c, meta: null }));
+}
+function salvarFocoConfig(p, c) { try { localStorage.setItem("vm-foco-" + p, JSON.stringify(c)); } catch (_) {} }
+
+function calcFoco() {
+  const per = F.periodo, V = vendas(), M = metas();
+  const todos = BASE.vendas[per] || [];
+  const dia = todos.reduce((m, r) => r.dtmov > m ? r.dtmov : m, "") || null;
+  const [a, mm] = per.split("-").map(Number), fim = new Date(Date.UTC(a, mm, 0)).getUTCDate();
+  let uteis = 0, decorridos = 0;
+  for (let d = 1; d <= fim; d++) { const dt = new Date(Date.UTC(a, mm - 1, d)); if (dt.getUTCDay() === 0) continue; uteis++; if (dia && dt.toISOString().slice(0, 10) <= dia) decorridos++; }
+  const nomes = {}; for (const r of todos) nomes[r.codprod] = r.descrprod; for (const r of BASE.metas[per] || []) nomes[r.codprod] ??= r.descrprod;
+  const itens = focoConfig(per).map(cfg => {
+    const c = +cfg.codprod, vs = V.filter(r => r.codprod === c && REAL(r.operacao)), ms = M.filter(r => r.codprod === c);
+    const metaResumo = ms.reduce((s, r) => s + r.qtd_meta, 0);
+    const meta = cfg.meta != null && cfg.meta !== "" ? +cfg.meta : metaResumo;
+    const real = vs.reduce((s, r) => s + r.qtd_kg, 0), vlr = vs.reduce((s, r) => s + r.vlrtot, 0);
+    const diaKg = vs.filter(r => r.dtmov === dia).reduce((s, r) => s + r.qtd_kg, 0);
+    const cart = ms.reduce((s, r) => s + r.qtd_fechada, 0), prev = uteis ? meta * decorridos / uteis : 0, falta = Math.max(meta - real - cart, 0);
+    const porDia = {}; vs.forEach(r => porDia[r.dtmov] = (porDia[r.dtmov] || 0) + r.qtd_kg);
+    return { codprod: c, descrprod: nomes[c] || "(produto sem movimento no mês)", meta, fonte: cfg.meta != null && cfg.meta !== "" ? "definida" : "resumo", previsto: prev,
+             realizado: real, vlr, perc: div(real, meta), percPrev: div(real, prev), dia: diaKg, carteira: cart, projecao: real + cart, falta,
+             necessario: uteis - decorridos ? falta / (uteis - decorridos) : null, porDia };
+  });
+  const s = k => itens.reduce((t, i) => t + (i[k] || 0), 0);
+  return { dia, uteis, decorridos, itens, tot: { meta: s("meta"), previsto: s("previsto"), realizado: s("realizado"), vlr: s("vlr"), dia: s("dia"), carteira: s("carteira"), projecao: s("projecao"), falta: s("falta") } };
+}
+
+function bulletFoco(itens) {
+  if (!itens.length) return `<div class="empty">Nenhum item foco.</div>`;
+  const max = Math.max(...itens.map(i => Math.max(i.meta || 0, i.realizado + Math.max(i.carteira, 0))), 1), p = v => Math.max(0, v / max * 100);
+  return `<div class="legend"><span><i class="sw" style="background:var(--accent)"></i>Realizado</span><span><i class="sw" style="background:var(--accent-soft)"></i>Carteira</span><span><i class="sw tick"></i>Meta</span><span><i class="sw" style="width:0;height:14px;border-left:2px dashed var(--ink-2);border-radius:0"></i>Previsto até o dia</span></div>
+  <div class="hbars">${itens.map(i => `<div class="hrow" data-tip="<b>${i.codprod} — ${esc(i.descrprod)}</b><br>Meta: ${num(i.meta)} kg<br>Previsto até o dia: ${num(i.previsto)} kg<br>Realizado: ${num(i.realizado)} kg (${pct(i.perc)})<br>Carteira: ${num(i.carteira)} kg">
+    <span class="lab" title="${esc(i.descrprod)}">${i.codprod} — ${esc(i.descrprod)}</span>
+    <span class="track"><span class="b c" style="width:${p(i.realizado + Math.max(i.carteira, 0))}%"></span><span class="b v" style="width:${p(i.realizado)}%"></span>
+      <span style="position:absolute;top:-2px;bottom:-2px;left:${p(i.previsto)}%;border-left:2px dashed var(--ink-2)"></span><span class="t" style="left:${p(i.meta || 0)}%"></span></span>
+    <span class="val">${pct(i.perc, 0)}</span></div>`).join("")}</div>`;
+}
+
+const STATUS_PREV = { good: ["✔", "No previsto"], warn: ["▲", "Perto do previsto"], crit: ["✖", "Abaixo do previsto"], none: ["–", "Sem meta"] };
+function telaFoco() {
+  const f = calcFoco(), t = f.tot, sit = v => v == null ? "none" : v >= 1 ? "good" : v >= 0.9 ? "warn" : "crit";
+  const dataBR = d => d ? d.split("-").reverse().join("/") : "–";
+  $("p-foco").innerHTML = `
+    <div class="kpis">
+      ${kpi("Realizado no mês", ton(t.realizado), `${pct(div(t.realizado, t.meta))} da meta · ${pct(div(t.realizado, t.previsto))} do previsto · ${brlC(t.vlr)}`, "hero")}
+      ${kpi("Meta do mês", ton(t.meta), `previsto até ${dataBR(f.dia)}: ${ton(t.previsto)} (dia útil ${f.decorridos} de ${f.uteis})`)}
+      ${kpi("Faturado no dia", ton(t.dia), dataBR(f.dia))}
+      ${kpi("Carteira", ton(t.carteira), "pedidos fechados (resumo de metas)")}
+      ${kpi("Projeção", ton(t.projecao), `realizado + carteira · ${pct(div(t.projecao, t.meta))} da meta`)}
+      ${kpi("Necessário por dia", f.uteis - f.decorridos ? ton(t.falta / (f.uteis - f.decorridos)) : "–", `para fechar a meta em ${f.uteis - f.decorridos} dias úteis`)}
+    </div>
+    <div class="card"><h3>Meta x realizado por item</h3><div class="hint">kg no mês; barra = realizado, clara = carteira, traço = meta, tracejado = previsto até o dia</div>${bulletFoco(f.itens)}</div>
+    <div class="tbl" id="t-foco"></div>
+    <div class="card"><h3>Faturado por dia (kg)</h3><div class="hint">Vendas − devoluções de cada item por data de movimento</div><div class="tbl" id="t-fdia" style="max-height:420px"></div></div>
+    <div class="card"><h3>Itens e metas</h3><div class="hint">Código do produto e meta do mês em kg. Meta em branco = soma das metas do produto no resumo. Fica guardado neste navegador. Pedidos do dia aparecem no sistema completo (iniciar.bat), que importa a consulta de pedidos do Sankhya.</div>
+      <div class="tbl"><table><thead><tr><th>Código</th><th>Meta (kg)</th><th></th></tr></thead><tbody id="f-cfg">${focoConfig(F.periodo).map((c, i) => `<tr><td><input id="fc-c${i}" value="${esc(c.codprod)}" inputmode="numeric" style="width:120px"></td><td><input id="fc-m${i}" value="${c.meta ?? ""}" inputmode="decimal" placeholder="do resumo" style="width:140px"></td><td><button class="btn ghost small" data-fdel="${i}">Remover</button></td></tr>`).join("")}</tbody></table></div>
+      <div class="controls" style="margin-top:10px"><button class="btn ghost small" id="f-add">+ Adicionar item</button><button class="btn small" id="f-salvar">Salvar itens e metas</button><button class="btn ghost small" id="f-padrao">Voltar aos 7 itens padrão</button></div></div>`;
+  tabela($("t-foco"), [
+    { k: "descrprod", t: "Item", f: (v, r) => `<b>${r.codprod}</b> — ${esc(v)}` },
+    { k: "percPrev", t: "Situação", f: v => { const s = sit(v); return `<span class="pill ${s}">${STATUS_PREV[s][0]} ${STATUS_PREV[s][1]}</span>`; } },
+    { k: "meta", t: "Meta kg", n: 1, f: (v, r) => `${num(v)}${r.fonte === "resumo" ? ' <span class="pill none">resumo</span>' : ""}` },
+    { k: "previsto", t: "Previsto kg", n: 1, f: v => num(v) },
+    { k: "realizado", t: "Realizado kg", n: 1, f: v => num(v, 1) },
+    { k: "perc", t: "% meta", n: 1, f: v => pct(v) },
+    { k: "percPrev", t: "% previsto", n: 1, f: v => pct(v) },
+    { k: "dia", t: "Faturado no dia", n: 1, f: v => num(v, 1) },
+    { k: "carteira", t: "Carteira kg", n: 1, f: v => num(v) },
+    { k: "projecao", t: "Projeção kg", n: 1, f: v => num(v) },
+    { k: "falta", t: "Falta kg", n: 1, f: v => num(v) },
+    { k: "necessario", t: "Necessário/dia", n: 1, f: v => num(v) },
+    { k: "vlr", t: "Realizado R$", n: 1, f: v => brl(v) },
+  ], f.itens, null);
+  const datas = [...new Set(f.itens.flatMap(i => Object.keys(i.porDia)))].sort().reverse();
+  $("t-fdia").innerHTML = `<table><thead><tr><th>Data</th>${f.itens.map(i => `<th class="n" title="${esc(i.descrprod)}">${i.codprod}</th>`).join("")}<th class="n">Total</th></tr></thead><tbody>
+    ${datas.map(d => `<tr><td>${dataBR(d)}</td>${f.itens.map(i => `<td class="n">${i.porDia[d] ? num(i.porDia[d]) : ""}</td>`).join("")}<td class="n">${num(f.itens.reduce((s, i) => s + (i.porDia[d] || 0), 0))}</td></tr>`).join("") || `<tr><td colspan="${f.itens.length + 2}" class="empty">Sem notas no mês.</td></tr>`}</tbody></table>`;
+  const ler = () => [...$("f-cfg").querySelectorAll("tr")].map((tr, i) => ({ codprod: tr.querySelector("[id^=fc-c]").value.trim(), meta: tr.querySelector("[id^=fc-m]").value.trim().replace(/\./g, "").replace(",", ".") || null })).filter(c => c.codprod);
+  $("f-salvar").onclick = () => { salvarFocoConfig(F.periodo, ler()); render(); };
+  $("f-padrao").onclick = () => { try { localStorage.removeItem("vm-foco-" + F.periodo); } catch (_) {} render(); };
+  $("f-add").onclick = () => { const n = $("f-cfg").children.length; $("f-cfg").insertAdjacentHTML("beforeend", `<tr><td><input id="fc-c${n}" inputmode="numeric" style="width:120px"></td><td><input id="fc-m${n}" inputmode="decimal" placeholder="do resumo" style="width:140px"></td><td><button class="btn ghost small" data-fdel="${n}">Remover</button></td></tr>`); ligarDel(); };
+  const ligarDel = () => $("f-cfg").querySelectorAll("[data-fdel]").forEach(b => b.onclick = () => b.closest("tr").remove());
+  ligarDel();
+  bindTips($("p-foco"));
+}
+
 /* ===================================================================== filtros e navegação */
 function opcoes(col) {
   const s = new Set();
@@ -1097,6 +1192,7 @@ const PAGINAS = {
   geral: ["Visão geral", "Resultado do mês contra a meta"],
   metas: ["Metas", "Meta, vendido e carteira por equipe, categoria e produto"],
   vendas: ["Vendas", "Faturamento líquido por cliente, produto, região e mais"],
+  foco: ["Itens foco do mês", "Meta, previsto até o dia e realizado dos produtos em foco"],
   importar: ["Importar planilhas", "Atualize a base com os relatórios exportados do Sankhya"],
   base: ["Base de dados", "O que está guardado, histórico de importações e exportação"],
   detalhe: ["Dados completos", "Todas as linhas e colunas do demonstrativo e do resumo de metas"],
@@ -1109,7 +1205,7 @@ function irPara(t) {
   $("app").classList.remove("open");
   document.querySelector(".filters").hidden = t === "importar" || t === "base";
   document.querySelectorAll(".filters .field").forEach((f, i) => { f.hidden = t === "validacao" && i > 0; });
-  for (const p of ["geral", "metas", "vendas", "detalhe", "validacao", "importar", "base"]) $("p-" + p).hidden = p !== t;
+  for (const p of ["geral", "metas", "vendas", "foco", "detalhe", "validacao", "importar", "base"]) $("p-" + p).hidden = p !== t;
   try { localStorage.setItem("vm-aba", t); } catch (_) {}
   render();
 }
@@ -1148,6 +1244,7 @@ function render() {
   if (!vazio) telaGeral();                    // também calcula o ritmo esperado
   if (aba === "metas" && !vazio) telaMetas();
   if (aba === "vendas" && !vazio) telaVendas();
+  if (aba === "foco" && !vazio) telaFoco();
   if (aba === "importar") telaConciliacao();
   if (aba === "detalhe" && !vazio) telaDetalhe();
   if (aba === "validacao") telaValidacao();
@@ -1232,6 +1329,6 @@ function carregarExemplo() {
   if (!periodos().length) carregarExemplo();
   iniciarFiltros();
   let a = "geral"; try { a = localStorage.getItem("vm-aba") || "geral"; } catch (_) {}
-  irPara(["geral", "metas", "vendas", "detalhe", "validacao", "importar", "base"].includes(a) ? a : "geral");
+  irPara(["geral", "metas", "vendas", "foco", "detalhe", "validacao", "importar", "base"].includes(a) ? a : "geral");
 })();
 </script>
