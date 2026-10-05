@@ -47,10 +47,11 @@ criados a partir delas; depois é só lançar e ajustar pelo sistema.
 | Análise | Visão geral | faturado, % da meta em kg e R$, carteira, clientes, devoluções, gráficos e rankings |
 | | Metas | meta x vendido x carteira por vendedor, supervisor, gerente, categoria, produto ou região |
 | | Vendas | faturamento por cliente, produto, UF, rede, mix, TOP, data, origem... |
+| | Itens foco | produtos acompanhados no mês: meta, previsto até o dia, realizado, pedidos do dia, carteira, projeção e necessário por dia; gera a SELECT Oracle com os itens e metas |
 | Lançamentos | Notas de venda | lista, busca, nova nota, alterar, excluir; itens com produto, kg, valor, ST, CT-e |
 | | Metas do mês | lista, nova meta, alterar, excluir, copiar metas de um mês para outro |
 | Cadastros | Vendedores, Clientes, Produtos, Regiões, TOPs, Empresas | incluir, alterar (inclusive o código), excluir com checagem de uso |
-| Dados | Importar planilhas | envio das planilhas do Sankhya |
+| Dados | Importar planilhas | envio das planilhas do Sankhya e do resultado da consulta de pedidos (itens foco) |
 | | Histórico | importações feitas, desfazer uma importação, exportar CSV e a base SQLite |
 | | Validação | confere a base contra os totais de cada planilha importada, integridade e conciliação |
 
@@ -91,6 +92,19 @@ A interface usa a API em `/api` (documentação interativa em http://localhost:8
 Principais rotas: `/api/cadastros/{vendedores|clientes|produtos|regioes|tops|empresas}`,
 `/api/notas`, `/api/metas`, `/api/importar`, `/api/cargas`, `/api/painel`, `/api/validacao`,
 `/api/exportar/{vendas|metas}.csv`, `/api/exportar/base.db`.
+
+## Itens foco
+
+Em **Análise › Itens foco** escolha os produtos do mês e, se quiser, uma meta própria (sem ela vale
+a soma das metas do produto no resumo). O botão **SELECT para o Sankhya** gera
+`vendas_bi/sankhya/itens_foco.sql` já com esses itens e metas:
+
+- **A** acompanhamento por item direto no Oracle; **B** por vendedor;
+- **C** pedidos do mês (TGFCAB `TIPMOV = 'P'`): exporte e importe em Dados › Importar planilhas para
+  ver pedidos do dia e carteira no sistema;
+- **D** conferência de setembro/2026 com os totais que o sistema calculou.
+
+Previsto até o dia = meta × dias úteis decorridos ÷ dias úteis do mês (segunda a sábado).
 
 ## Sankhya
 

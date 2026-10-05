@@ -141,7 +141,7 @@ def test_desfazer_carga(conn):
     from vendas_bi.importer import desfazer_carga
 
     r = importar(conn, _planilha(VENDAS, [_venda()]), "v.xlsx")
-    assert desfazer_carga(conn, r.carga_id) == {"notas": 1, "metas": 0}
+    assert desfazer_carga(conn, r.carga_id) == {"notas": 1, "metas": 0, "pedidos": 0}
     assert _conta(conn, "nota") == 0 and _conta(conn, "carga") == 0
     assert _conta(conn, "parceiro") == 1   # cadastros continuam
 

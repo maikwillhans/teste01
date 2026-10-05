@@ -25,7 +25,7 @@ from pathlib import Path
 
 import pandas as pd
 
-from .layouts import LAYOUTS, METAS, VENDAS
+from .layouts import LAYOUTS, METAS, PEDIDOS, VENDAS
 
 COLUNAS_FATO = {
     VENDAS: [
@@ -35,6 +35,10 @@ COLUNAS_FATO = {
         "gerente", "codprod", "descrprod", "codgrupoprod", "grupoprod", "linha",
         "familia", "codmix_comercial", "mix_comercial", "codmix_biblia", "mix_biblia",
         "qtd_kg", "vlrtot", "vlrsubst", "vlrtot_st", "nucte", "ref_rvv",
+    ],
+    PEDIDOS: [
+        "periodo", "nunota", "numnota", "dtneg", "codemp", "codtipoper", "codparc", "nomeparc", "codvend",
+        "vendedor", "sequencia", "codprod", "descrprod", "codvol", "qtdneg", "qtd_kg", "vlrtot", "pendente_kg", "pendente",
     ],
     METAS: [
         "periodo", "codreg", "nomereg", "vendedor", "vendedor_ativo", "supervisor",
@@ -80,7 +84,14 @@ def _ler_bruto(origem, nome: str) -> pd.DataFrame:
     if isinstance(origem, (bytes, bytearray)):
         origem = io.BytesIO(origem)
     if ext == ".csv":
-        return pd.read_csv(origem, header=None, dtype=object, sep=None, engine="python")
+        dados = origem.read() if hasattr(origem, "read") else Path(origem).read_bytes()
+        for cod in ("utf-8-sig", "latin-1"):   # exportações do Oracle/Sankhya costumam vir em latin-1
+            try:
+                texto = dados.decode(cod)
+                break
+            except UnicodeDecodeError:
+                continue
+        return pd.read_csv(io.StringIO(texto), header=None, dtype=object, sep=None, engine="python")
     engine = "xlrd" if ext == ".xls" else "openpyxl"
     return pd.read_excel(origem, header=None, dtype=object, engine=engine)
 
@@ -120,8 +131,21 @@ def _para_data(serie: pd.Series) -> pd.Series:
             return pd.Timestamp(v).strftime("%Y-%m-%d")
         if isinstance(v, (int, float)):  # número de série do Excel
             return (pd.Timestamp("1899-12-30") + pd.Timedelta(days=float(v))).strftime("%Y-%m-%d")
-        return datetime.strptime(str(v).strip()[:10], "%d/%m/%Y").strftime("%Y-%m-%d")
+        t = str(v).strip()[:10]
+        if re.fullmatch(r"\d{4}-\d{2}-\d{2}", t):     # ISO (exportação das consultas Oracle)
+            return t
+        return datetime.strptime(t, "%d/%m/%Y").strftime("%Y-%m-%d")
     return serie.map(conv)
+
+
+def _numero_br(v):
+    """Aceita 1234.5, 1234,5 e 1.234,5 (CSV exportado com vírgula decimal)."""
+    if isinstance(v, str):
+        s = v.strip().replace(" ", "")
+        if "," in s:
+            s = s.replace(".", "").replace(",", ".")
+        return s
+    return v
 
 
 def _converter(serie: pd.Series, tipo: str) -> pd.Series:
@@ -129,7 +153,7 @@ def _converter(serie: pd.Series, tipo: str) -> pd.Series:
         return serie.map(lambda v: None if pd.isna(v) or str(v).strip() == "" else str(v).strip())
     if tipo == "date":
         return _para_data(serie)
-    num = pd.to_numeric(serie, errors="coerce")
+    num = pd.to_numeric(serie.map(_numero_br), errors="coerce")
     if tipo == "int":
         return num.round().astype("Int64")
     return num.fillna(0.0).astype(float)
@@ -159,7 +183,8 @@ def ler_relatorio(origem, nome: str, periodo_meta: str | None = None, todas: boo
     df.columns = cab
     avisos: list[str] = []
 
-    faltando = [c for c in layout["colunas"] if c not in df.columns and layout["colunas"][c][0]]
+    opcionais = set(layout.get("opcionais", []))
+    faltando = [c for c in layout["colunas"] if c not in df.columns and layout["colunas"][c][0] and c not in opcionais]
     if faltando:
         raise ErroImportacao(f"Colunas ausentes no relatório de {tipo}: {', '.join(faltando)}")
     extras = [c for c in df.columns if c and c not in layout["colunas"]]
@@ -173,11 +198,16 @@ def ler_relatorio(origem, nome: str, periodo_meta: str | None = None, todas: boo
     saida = pd.DataFrame(index=df.index)
     for origem_col, (destino, tipo_col, _) in layout["colunas"].items():
         if destino:
-            saida[destino] = _converter(df[origem_col], tipo_col)
-    saida["codreg"], saida["nomereg"] = _separar_regiao(saida.pop("regiao"))
+            coluna = df[origem_col] if origem_col in df.columns else pd.Series([None] * len(df), index=df.index, dtype=object)
+            saida[destino] = _converter(coluna, tipo_col)
+    if "regiao" in saida:
+        saida["codreg"], saida["nomereg"] = _separar_regiao(saida.pop("regiao"))
 
     if tipo == VENDAS:
         saida["periodo"] = saida["dtmov"].str[:7]
+    elif tipo == PEDIDOS:
+        saida = saida[saida["dtneg"].notna()]
+        saida["periodo"] = saida["dtneg"].str[:7]
     else:
         if periodo_meta is None:
             if emitido is None:
@@ -204,6 +234,9 @@ CONTROLE = {
     METAS: {"somas": ["Vendido", "Meta", "Fechado", "Valor Fechado", "Valor Faturado", "Valor Fat. Previsto"],
             "distintos": ["Vendedor", "Cód.", "Região"],
             "contagem": "Categoria"},
+    PEDIDOS: {"somas": ["QTD_KG", "VLRTOT", "PENDENTE_KG"],
+              "distintos": ["NUNOTA", "CODPARC", "CODPROD"],
+              "contagem": "CODPROD"},
 }
 
 
@@ -212,13 +245,15 @@ def _controle(df: pd.DataFrame, tipo: str, total: int | None) -> dict:
     cfg = CONTROLE[tipo]
     chave = df[LAYOUTS[tipo]["obrigatorias"][0]]
     df = df[chave.notna() & (chave.astype(str).str.strip() != "")]
-    num = lambda c: pd.to_numeric(df[c], errors="coerce").fillna(0)
+    num = lambda c: pd.to_numeric(df[c].map(_numero_br), errors="coerce").fillna(0)
     return {
         "linhas": int(len(df)), "total_informado": total,
-        "somas": {c: round(float(num(c).sum()), 4) for c in cfg["somas"]},
-        "distintos": {c: int(df[c].dropna().astype(str).str.strip().replace("", pd.NA).dropna().nunique()) for c in cfg["distintos"]},
+        "somas": {c: round(float(num(c).sum()), 4) for c in cfg["somas"] if c in df},
+        "distintos": {c: int(df[c].dropna().astype(str).str.strip().replace("", pd.NA).dropna().nunique())
+                      for c in cfg["distintos"] if c in df},
         "contagem_campo": cfg["contagem"],
-        "contagem": {str(k): int(v) for k, v in df[cfg["contagem"]].astype(str).str.strip().value_counts().items()},
+        "contagem": {str(k): int(v) for k, v in df[cfg["contagem"]].astype(str).str.strip().value_counts().items()}
+                    if cfg["contagem"] in df else {},
     }
 
 
@@ -352,6 +387,18 @@ def _gravar_metas(conn, df: pd.DataFrame, carga_id: int, origem: str) -> int:
     return removidas
 
 
+def _gravar_pedidos(conn, df: pd.DataFrame, carga_id: int) -> int:
+    """Pedidos são uma foto do Sankhya: a nova exportação substitui os meses que ela traz."""
+    periodos = sorted(df["periodo"].unique())
+    marc = ",".join("?" * len(periodos))
+    removidas = conn.execute(f"DELETE FROM pedido WHERE substr(dtneg,1,7) IN ({marc})", periodos).rowcount
+    colunas = [c for c in COLUNAS_FATO[PEDIDOS] if c != "periodo"]
+    conn.executemany(
+        f"INSERT INTO pedido ({','.join(colunas)}, carga_id) VALUES ({','.join('?' * (len(colunas) + 1))})",
+        [(*r, carga_id) for r in _linhas(df, colunas)])
+    return removidas
+
+
 def gravar(conn: sqlite3.Connection, rel: Relatorio, arquivo: str | None = None,
            sha256: str | None = None, origem: str = "planilha") -> ResultadoCarga:
     """Atualiza cadastros e substitui os lançamentos importados dos períodos do relatório."""
@@ -367,6 +414,8 @@ def gravar(conn: sqlite3.Connection, rel: Relatorio, arquivo: str | None = None,
         carga_id = cur.lastrowid
         if rel.tipo == VENDAS:
             removidas = _gravar_vendas(conn, rel.dados, carga_id, origem)
+        elif rel.tipo == PEDIDOS:
+            removidas = _gravar_pedidos(conn, rel.dados, carga_id)
         else:
             removidas = _gravar_metas(conn, rel.dados, carga_id, origem)
     return ResultadoCarga(carga_id, rel.tipo, periodos, len(rel.dados), removidas, rel.avisos)
@@ -377,8 +426,9 @@ def desfazer_carga(conn: sqlite3.Connection, carga_id: int) -> dict:
     with conn:
         notas = conn.execute("DELETE FROM nota WHERE carga_id = ?", (carga_id,)).rowcount
         metas = conn.execute("DELETE FROM meta WHERE carga_id = ?", (carga_id,)).rowcount
+        pedidos = conn.execute("DELETE FROM pedido WHERE carga_id = ?", (carga_id,)).rowcount
         conn.execute("DELETE FROM carga WHERE id = ?", (carga_id,))
-    return {"notas": notas, "metas": metas}
+    return {"notas": notas, "metas": metas, "pedidos": pedidos}
 
 
 def _realizado_por_mes(conn) -> dict[str, float]:
@@ -463,14 +513,14 @@ def importar(conn: sqlite3.Connection, origem, nome: str | None = None,
         if rel.dados.duplicated(["codreg", "vendedor", "codprod"]).any():
             n = int(rel.dados.duplicated(["codreg", "vendedor", "codprod"]).sum())
             rel.avisos.append(f"{n} linha(s) repetida(s) (mesma região, vendedor e produto) foram somadas.")
-    else:
+    elif rel.tipo == VENDAS:
         rel.avisos.extend(_avisos_notas(rel.dados))
     if not forcar:
         ja = conn.execute(
             "SELECT id FROM carga WHERE sha256 = ? AND tipo = ? AND periodos = ? ORDER BY id DESC LIMIT 1",
             (sha, rel.tipo, ",".join(rel.periodos)),
         ).fetchone()
-        tabela = "nota" if rel.tipo == VENDAS else "meta"
+        tabela = {VENDAS: "nota", METAS: "meta", PEDIDOS: "pedido"}[rel.tipo]
         ultima = conn.execute(f"SELECT MAX(carga_id) FROM {tabela}").fetchone()[0]
         if ja and ultima == ja[0]:
             return ResultadoCarga(ja[0], rel.tipo, rel.periodos, len(rel.dados), 0,

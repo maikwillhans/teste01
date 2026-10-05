@@ -112,7 +112,10 @@ def _converter_campo(valor, tipo: str, rotulo: str):
             raise ErroValidacao(f"{rotulo}: informe um número inteiro.")
     if tipo == "float":
         try:
-            return float(str(valor).replace(",", "."))
+            t = str(valor).strip()
+            if "," in t:                      # 1.234,56 (formato brasileiro)
+                t = t.replace(".", "").replace(",", ".")
+            return float(t)
         except ValueError:
             raise ErroValidacao(f"{rotulo}: informe um número.")
     if tipo == "sn":
@@ -449,6 +452,21 @@ def validar(conn, periodo: str) -> list[dict]:
                               ("Regiões distintas", "Região", dr)):
                 add(grupo, rot, ctl["distintos"][h], v, "ok" if ctl["distintos"][h] == v else "erro")
 
+    carga = q("SELECT id, arquivo, controle FROM carga WHERE tipo = 'pedidos' AND ',' || periodos || ',' LIKE ? "
+              "ORDER BY id DESC LIMIT 1", f"%,{periodo},%")
+    if carga and carga[2]:
+        cid, arquivo, ctl = carga[0], carga[1], json.loads(carga[2])
+        g = "Importação de pedidos (itens foco)"
+        add(g, "Arquivo", "", "", "ok", arquivo)
+        n, kg, vlr, pend, dn = q("SELECT COUNT(*), SUM(qtd_kg), SUM(vlrtot), SUM(pendente_kg), COUNT(DISTINCT nunota) "
+                                 "FROM pedido WHERE carga_id = ?", cid)
+        add(g, "Linhas gravadas", ctl["linhas"], n, "ok" if n == ctl["linhas"] else "erro")
+        for rot, h, v in (("Soma QTD_KG", "QTD_KG", kg), ("Soma VLRTOT", "VLRTOT", vlr), ("Soma PENDENTE_KG", "PENDENTE_KG", pend)):
+            if h in ctl["somas"]:
+                add(g, rot, round(ctl["somas"][h], 2), round(v or 0, 2), "ok" if perto(ctl["somas"][h], v or 0) else "erro")
+        if "NUNOTA" in ctl["distintos"]:
+            add(g, "Pedidos (NUNOTA) distintos", ctl["distintos"]["NUNOTA"], dn, "ok" if ctl["distintos"]["NUNOTA"] == dn else "erro")
+
     g = "Lançamentos do mês"
     nm = q("SELECT COUNT(*) FROM nota WHERE substr(dtmov,1,7) = ? AND origem = 'manual'", periodo)[0]
     mm = q("SELECT COUNT(*) FROM meta WHERE periodo = ? AND origem = 'manual'", periodo)[0]
@@ -483,3 +501,173 @@ def validar(conn, periodo: str) -> list[dict]:
         add(g, "Linhas de meta com realizado idêntico", linhas, iguais, "ok" if iguais == linhas else "aviso",
             "" if iguais == linhas else "As diferenças por linha estão em Dados > Conciliação.")
     return out
+
+
+# ============================================================ itens foco do mês
+ITENS_FOCO_SUGERIDOS = [90346, 871, 32537, 3465, 949, 85847, 11145]
+SQL_FOCO = __import__("pathlib").Path(__file__).with_name("sankhya") / "itens_foco.sql"
+
+
+def _dias_uteis(periodo: str, ate: str) -> tuple[int, int]:
+    """Dias úteis (segunda a sábado) do mês e quantos já passaram até a data `ate`, inclusive."""
+    from calendar import monthrange
+    from datetime import date
+
+    ano, mes = map(int, periodo.split("-"))
+    dias = [date(ano, mes, d) for d in range(1, monthrange(ano, mes)[1] + 1)]
+    uteis = [d for d in dias if d.weekday() != 6]
+    return len(uteis), sum(1 for d in uteis if d.isoformat() <= ate)
+
+
+def _periodo_valido(periodo: str) -> str:
+    if not re.fullmatch(r"\d{4}-\d{2}", periodo or ""):
+        raise ErroValidacao("Período deve estar no formato AAAA-MM.")
+    return periodo
+
+
+def foco_config(conn, periodo: str) -> list[dict]:
+    _periodo_valido(periodo)
+    return _dicts(conn.execute(
+        """SELECT f.codprod, p.descrprod, f.meta_kg, f.ordem,
+                  (SELECT SUM(m.qtd_meta) FROM meta m WHERE m.periodo = f.periodo AND m.codprod = f.codprod) AS meta_resumo,
+                  (SELECT SUM(m.qtd_meta * m.pm_meta) FROM meta m WHERE m.periodo = f.periodo AND m.codprod = f.codprod) AS meta_resumo_valor
+           FROM item_foco f JOIN produto p ON p.codprod = f.codprod
+           WHERE f.periodo = ? ORDER BY f.ordem, f.codprod""", (periodo,)))
+
+
+def salvar_foco_config(conn, periodo: str, itens: list[dict]) -> list[dict]:
+    """Substitui a lista de itens foco do mês. meta_kg vazio = usar a meta do resumo."""
+    _periodo_valido(periodo)
+    linhas, vistos = [], set()
+    for n, it in enumerate(itens or [], 1):
+        codprod = _converter_campo(it.get("codprod"), "int", f"Item {n}: produto")
+        if codprod is None:
+            continue
+        if codprod in vistos:
+            raise ErroValidacao(f"Produto {codprod} aparece duas vezes.")
+        if not _existe(conn, "produtos", codprod):
+            raise ErroValidacao(f"Item {n}: produto {codprod} não cadastrado.")
+        meta = _converter_campo(it.get("meta_kg"), "float", f"Item {n}: meta")
+        if meta is not None and meta < 0:
+            raise ErroValidacao(f"Item {n}: meta não pode ser negativa.")
+        vistos.add(codprod)
+        linhas.append((periodo, codprod, meta, n))
+    with conn:
+        conn.execute("DELETE FROM item_foco WHERE periodo = ?", (periodo,))
+        conn.executemany("INSERT INTO item_foco (periodo, codprod, meta_kg, ordem) VALUES (?,?,?,?)", linhas)
+    return foco_config(conn, periodo)
+
+
+def acompanhamento_foco(conn, periodo: str, dia: str | None = None) -> dict:
+    """Meta x previsto x realizado x pedidos do dia dos itens foco (mesmas regras de sankhya/itens_foco.sql)."""
+    from calendar import monthrange
+    from datetime import date
+
+    _periodo_valido(periodo)
+    hoje = date.today().isoformat()
+    fim_mes = f"{periodo}-{monthrange(*map(int, periodo.split('-')))[1]:02d}"
+    if dia and not (re.fullmatch(r"\d{4}-\d{2}-\d{2}", dia) and dia.startswith(periodo)):
+        raise ErroValidacao("O dia de referência precisa ser uma data do mês escolhido.")
+    if not dia:
+        if hoje[:7] == periodo:      # mês corrente: hoje
+            dia = hoje
+        else:                        # mês fechado: último dia com movimento (ou o fim do mês)
+            ultimo = conn.execute(
+                "SELECT MAX(d) FROM (SELECT MAX(dtmov) d FROM nota WHERE substr(dtmov,1,7) = ? "
+                "UNION ALL SELECT MAX(dtneg) FROM pedido WHERE substr(dtneg,1,7) = ?)", (periodo, periodo)).fetchone()[0]
+            dia = ultimo or min(fim_mes, max(hoje, f"{periodo}-01"))
+    total_uteis, decorridos = _dias_uteis(periodo, dia)
+    restantes = total_uteis - decorridos
+
+    itens = foco_config(conn, periodo)
+    cods = [i["codprod"] for i in itens]
+    marc = ",".join("?" * len(cods)) or "NULL"
+    q = lambda sql, *a: {r[0]: r[1:] for r in conn.execute(sql, a)}
+
+    real = q(f"""SELECT codprod, SUM(qtd_kg), SUM(vlrtot), SUM(CASE WHEN dtmov = ? THEN qtd_kg ELSE 0 END),
+                        COUNT(DISTINCT CASE WHEN dtmov = ? THEN nunota END)
+                 FROM vw_venda WHERE periodo = ? AND operacao IN ('V','D') AND codprod IN ({marc})
+                 GROUP BY codprod""", dia, dia, periodo, *cods)
+    tem_pedidos = conn.execute("SELECT COUNT(*) FROM pedido WHERE substr(dtneg,1,7) = ?", (periodo,)).fetchone()[0] > 0
+    ped = q(f"""SELECT codprod,
+                       COUNT(DISTINCT CASE WHEN dtneg = ? THEN nunota END),
+                       COUNT(DISTINCT CASE WHEN dtneg = ? THEN codparc END),
+                       SUM(CASE WHEN dtneg = ? THEN qtd_kg ELSE 0 END),
+                       SUM(CASE WHEN dtneg = ? THEN vlrtot ELSE 0 END),
+                       COUNT(DISTINCT nunota), SUM(pendente_kg)
+                FROM pedido WHERE substr(dtneg,1,7) = ? AND dtneg <= ? AND codprod IN ({marc})
+                GROUP BY codprod""", dia, dia, dia, dia, periodo, dia, *cods)
+    cart_resumo = q(f"SELECT codprod, SUM(qtd_fechada) FROM meta WHERE periodo = ? AND codprod IN ({marc}) GROUP BY codprod",
+                    periodo, *cods)
+
+    linhas = []
+    for it in itens:
+        c = it["codprod"]
+        kg, vlr, kg_dia, notas_dia = real.get(c, (0, 0, 0, 0))
+        p = ped.get(c, (0, 0, 0, 0, 0, 0))
+        meta = it["meta_kg"] if it["meta_kg"] is not None else (it["meta_resumo"] or 0)
+        carteira = (p[5] or 0) if tem_pedidos else (cart_resumo.get(c, (0,))[0] or 0)
+        previsto = meta * decorridos / total_uteis if total_uteis else 0
+        falta = max(meta - kg - carteira, 0)
+        linhas.append({
+            "codprod": c, "descrprod": it["descrprod"], "meta_kg": meta,
+            "fonte_meta": "definida" if it["meta_kg"] is not None else ("resumo" if it["meta_resumo"] else "sem meta"),
+            "previsto_kg": previsto, "realizado_kg": kg or 0, "realizado_vlr": vlr or 0,
+            "perc_meta": (kg or 0) / meta if meta else None,
+            "perc_previsto": (kg or 0) / previsto if previsto else None,
+            "faturado_dia_kg": kg_dia or 0, "notas_dia": notas_dia or 0,
+            "pedidos_dia": p[0] or 0, "clientes_pedido_dia": p[1] or 0, "pedido_dia_kg": p[2] or 0,
+            "pedido_dia_vlr": p[3] or 0, "pedidos_mes": p[4] or 0,
+            "carteira_kg": carteira, "projecao_kg": (kg or 0) + carteira, "falta_kg": falta,
+            "necessario_dia_kg": falta / restantes if restantes else None,
+        })
+    soma = lambda k: sum(l[k] or 0 for l in linhas)
+    totais = {k: soma(k) for k in ("meta_kg", "previsto_kg", "realizado_kg", "realizado_vlr", "faturado_dia_kg",
+                                    "pedidos_dia", "pedido_dia_kg", "pedido_dia_vlr", "carteira_kg", "projecao_kg", "falta_kg")}
+    totais["pedidos_dia"] = conn.execute(
+        f"SELECT COUNT(DISTINCT nunota) FROM pedido WHERE dtneg = ? AND codprod IN ({marc})", (dia, *cods)).fetchone()[0]
+    totais["perc_meta"] = totais["realizado_kg"] / totais["meta_kg"] if totais["meta_kg"] else None
+    totais["perc_previsto"] = totais["realizado_kg"] / totais["previsto_kg"] if totais["previsto_kg"] else None
+    totais["necessario_dia_kg"] = totais["falta_kg"] / restantes if restantes else None
+
+    diario = _dicts(conn.execute(
+        f"""SELECT dtmov AS data, codprod, SUM(qtd_kg) AS kg FROM vw_venda
+            WHERE periodo = ? AND operacao IN ('V','D') AND codprod IN ({marc}) GROUP BY dtmov, codprod ORDER BY dtmov""",
+        (periodo, *cods)))
+    dias_com_dados = sorted({r[0] for r in conn.execute(
+        "SELECT DISTINCT dtmov FROM nota WHERE substr(dtmov,1,7) = ? UNION SELECT DISTINCT dtneg FROM pedido WHERE substr(dtneg,1,7) = ?",
+        (periodo, periodo))}, reverse=True)
+    carga_ped = conn.execute("SELECT arquivo, importado_em FROM carga WHERE tipo = 'pedidos' AND ',' || periodos || ',' LIKE ? "
+                             "ORDER BY id DESC LIMIT 1", (f"%,{periodo},%",)).fetchone()
+    return {
+        "periodo": periodo, "dia": dia, "dias_uteis": total_uteis, "dias_decorridos": decorridos, "dias_restantes": restantes,
+        "itens": linhas, "totais": totais, "diario": diario, "dias_com_dados": dias_com_dados,
+        "pedidos": {"importados": tem_pedidos, "arquivo": carga_ped[0] if carga_ped else None,
+                    "importado_em": carga_ped[1] if carga_ped else None},
+    }
+
+
+def copiar_foco(conn, de: str, para: str) -> list[dict]:
+    """Copia a lista de itens foco (e as metas definidas) de um mês para outro."""
+    itens = foco_config(conn, de)
+    return salvar_foco_config(conn, para, [{"codprod": i["codprod"], "meta_kg": i["meta_kg"]} for i in itens])
+
+
+def sql_foco(conn, periodo: str) -> str:
+    """Gera a SELECT Oracle (sankhya/itens_foco.sql) com os itens e metas configurados no sistema."""
+    itens = acompanhamento_foco(conn, periodo)["itens"]
+    sql = SQL_FOCO.read_text(encoding="utf-8")
+    if not itens:
+        return sql
+    cods = ", ".join(str(i["codprod"]) for i in itens)
+    linhas = []
+    for n, i in enumerate(itens, 1):
+        fim = " FROM DUAL UNION ALL" if n < len(itens) else " FROM DUAL"
+        desc = re.sub(r"[^\w .\-/]", "", i["descrprod"] or "")
+        linhas.append(f"        SELECT {n} ORDEM, {i['codprod']} CODPROD, {round(i['meta_kg'] or 0, 3)} META_KG{fim}   -- {desc}")
+    sql = re.sub(r"(-- >>> ITENS FOCO E META DO MÊS \(kg\) — edite aqui <<<\n)(.*?)(\n     \) F)",
+                 lambda m: m.group(1) + "\n".join(linhas) + m.group(3), sql, flags=re.S)
+    sql = sql.replace("(90346, 871, 32537, 3465, 949, 85847, 11145)", f"({cods})")
+    ano, mes = periodo.split("-")
+    return sql.replace("Os valores de exemplo são as metas de 09/2026 do Resumo Geral\n-- das Metas/Vendas (soma de todos os vendedores). Atualize a cada mês.",
+                       f"Gerada pelo sistema com as metas de {mes}/{ano} configuradas em Itens foco.")

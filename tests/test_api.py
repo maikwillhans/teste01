@@ -83,9 +83,46 @@ def test_validacao_exportacao_e_desfazer(api):
     assert csv.status_code == 200 and "nunota" in csv.text.splitlines()[0]
     cargas = api.get("/api/cargas").json()
     assert len(cargas) == 2
-    assert api.delete(f"/api/cargas/{cargas[-1]['id']}").json() == {"notas": 1, "metas": 0}
+    assert api.delete(f"/api/cargas/{cargas[-1]['id']}").json() == {"notas": 1, "metas": 0, "pedidos": 0}
 
 
 def test_planilha_invalida(api):
     r = api.post("/api/importar", files={"arquivo": ("x.csv", b"a;b\n1;2\n")})
     assert r.status_code == 400 and "não reconhecida" in r.json()["erro"]
+
+
+def test_itens_foco_meta_previsto_realizado_e_pedidos(api):
+    # sem lista configurada: acompanhamento vazio, com a lista sugerida disponível
+    cfg = api.get("/api/foco/config", params={"periodo": "2026-09"}).json()
+    assert cfg["itens"] == [] and 949 in cfg["sugeridos"]
+    # produto do resumo (239) usa a meta do resumo; produto novo recebe meta definida
+    api.post("/api/cadastros/produtos", json={"codprod": 949, "descrprod": "LINGUICA TOSCANA 5 KG"})
+    r = api.put("/api/foco/config", json={"periodo": "2026-09", "itens": [{"codprod": 239}, {"codprod": 949, "meta_kg": "1.000,5"}]})
+    assert r.status_code == 200 and [i["codprod"] for i in r.json()] == [239, 949]
+
+    # pedidos exportados do Sankhya (consulta C), CSV com vírgula decimal
+    csv = ("NUNOTA;DTNEG;CODPARC;CODVEND;CODPROD;QTD_KG;VLRTOT;PENDENTE_KG\n"
+           "500;2026-09-05;10;410;239;10,5;157,50;4,5\n"
+           "501;2026-09-05;11;410;239;5;75;0\n"
+           "502;2026-09-04;10;410;949;100;1140;100\n")
+    r = api.post("/api/importar", files={"arquivo": ("pedidos.csv", csv.encode("latin-1"))})
+    assert r.status_code == 200 and r.json()["tipo"] == "pedidos" and r.json()["linhas"] == 3, r.text
+
+    f = api.get("/api/foco", params={"periodo": "2026-09", "dia": "2026-09-05"}).json()
+    assert (f["dias_uteis"], f["dias_decorridos"]) == (26, 5)          # setembro/2026: seg-sáb
+    a, b = f["itens"]
+    assert a["fonte_meta"] == "resumo" and a["meta_kg"] == 200
+    assert a["realizado_kg"] == 100 and a["faturado_dia_kg"] == 100   # nota do _venda() é de 05/09
+    assert abs(a["previsto_kg"] - 200 * 5 / 26) < 1e-9
+    assert (a["pedidos_dia"], a["clientes_pedido_dia"], a["pedido_dia_kg"]) == (2, 2, 15.5)
+    assert a["carteira_kg"] == 4.5 and a["projecao_kg"] == 104.5
+    assert b["fonte_meta"] == "definida" and b["meta_kg"] == 1000.5 and b["pedidos_dia"] == 0 and b["pedidos_mes"] == 1
+    assert f["totais"]["pedidos_dia"] == 2 and f["pedidos"]["importados"]
+
+    # SELECT Oracle gerada com os itens e metas do sistema
+    sql = api.get("/api/foco/sql", params={"periodo": "2026-09"}).text
+    assert "ITE.CODPROD IN (239, 949)" in sql and "SELECT 2 ORDEM, 949 CODPROD, 1000.5 META_KG" in sql
+    # copiar para outubro
+    assert len(api.post("/api/foco/copiar", json={"de": "2026-09", "para": "2026-10"}).json()) == 2
+    v = [x for x in api.get("/api/validacao", params={"periodo": "2026-09"}).json() if x["grupo"].startswith("Importação de pedidos")]
+    assert v and all(x["estado"] == "ok" for x in v)

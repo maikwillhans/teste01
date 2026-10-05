@@ -13,7 +13,7 @@ PRAGMA foreign_keys = ON;
 
 CREATE TABLE IF NOT EXISTS carga (
     id                INTEGER PRIMARY KEY AUTOINCREMENT,
-    tipo              TEXT NOT NULL CHECK (tipo IN ('vendas', 'metas')),
+    tipo              TEXT NOT NULL CHECK (tipo IN ('vendas', 'metas', 'pedidos')),
     origem            TEXT NOT NULL DEFAULT 'planilha',  -- planilha | sankhya
     arquivo           TEXT,
     sha256            TEXT,
@@ -129,6 +129,44 @@ CREATE TABLE IF NOT EXISTS meta (
     UNIQUE (periodo, codreg, codvend, codprod)
 );
 CREATE INDEX IF NOT EXISTS ix_meta_periodo ON meta (periodo);
+
+-- Pedidos de venda (TGFCAB TIPMOV = 'P' + TGFITE), importados da consulta C de
+-- sankhya/itens_foco.sql. Foto do Sankhya no momento da exportação; sem chaves
+-- estrangeiras porque o pedido pode trazer cliente/produto ainda não cadastrado aqui.
+CREATE TABLE IF NOT EXISTS pedido (
+    id          INTEGER PRIMARY KEY AUTOINCREMENT,
+    nunota      INTEGER NOT NULL,
+    numnota     INTEGER,
+    dtneg       TEXT NOT NULL,             -- AAAA-MM-DD
+    codemp      INTEGER,
+    codtipoper  INTEGER,
+    codparc     INTEGER,
+    nomeparc    TEXT,
+    codvend     INTEGER,
+    vendedor    TEXT,
+    sequencia   INTEGER,
+    codprod     INTEGER NOT NULL,
+    descrprod   TEXT,
+    codvol      TEXT,
+    qtdneg      REAL,
+    qtd_kg      REAL NOT NULL DEFAULT 0,
+    vlrtot      REAL NOT NULL DEFAULT 0,
+    pendente_kg REAL NOT NULL DEFAULT 0,   -- ainda não faturado (carteira)
+    pendente    TEXT,
+    carga_id    INTEGER REFERENCES carga(id) ON DELETE SET NULL
+);
+CREATE INDEX IF NOT EXISTS ix_pedido_dt ON pedido (dtneg, codprod);
+
+-- Itens foco do mês: produtos acompanhados de perto, com meta própria opcional.
+-- meta_kg vazio = usa a soma das metas do produto no mês (tabela meta / resumo importado).
+CREATE TABLE IF NOT EXISTS item_foco (
+    id      INTEGER PRIMARY KEY AUTOINCREMENT,
+    periodo TEXT NOT NULL,
+    codprod INTEGER NOT NULL REFERENCES produto(codprod) ON UPDATE CASCADE,
+    meta_kg REAL,
+    ordem   INTEGER NOT NULL DEFAULT 0,
+    UNIQUE (periodo, codprod)
+);
 
 -- ------------------------------------------------------------ visões
 -- Uma linha por item, no mesmo formato do Demonstrativo Mensal.

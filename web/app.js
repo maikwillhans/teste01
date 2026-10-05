@@ -75,6 +75,7 @@ const PAGINAS = {
   geral: ["Visão geral", "Resultado do mês contra a meta", "equipe"],
   "analise-metas": ["Metas", "Meta, vendido e carteira por equipe, categoria e produto", "equipe"],
   "analise-vendas": ["Vendas", "Faturamento líquido por cliente, produto, região e mais", "equipe"],
+  foco: ["Itens foco do mês", "Meta, previsto, realizado e pedidos do dia dos produtos em foco", "periodo"],
   notas: ["Notas de venda", "Lance, altere ou consulte as notas (cabeçalho + itens)", "periodo"],
   metas: ["Metas do mês", "Lance e ajuste as metas por região, vendedor e produto", "periodo"],
   importar: ["Importar planilhas", "Atualize a base com os relatórios exportados do Sankhya", ""],
@@ -514,7 +515,7 @@ function telaImportar(el) {
     <div class="drop" id="drop" tabindex="0" role="button" aria-label="Escolher planilhas">
       <span class="up"><svg class="i" viewBox="0 0 24 24"><path d="M12 15V3"/><path d="m7 8 5-5 5 5"/><path d="M5 15v4a2 2 0 0 0 2 2h10a2 2 0 0 0 2-2v-4"/></svg></span>
       <strong>Arraste as planilhas aqui ou clique para escolher</strong>
-      <p>Demonstrativo Mensal das Vendas Efetuadas e/ou Resumo Geral das Metas/Vendas, do jeito que saem do Sankhya (.xls, .xlsx ou .csv). O tipo é reconhecido sozinho.</p>
+      <p>Demonstrativo Mensal das Vendas Efetuadas, Resumo Geral das Metas/Vendas ou o resultado da consulta C de pedidos (itens foco), do jeito que saem do Sankhya (.xls, .xlsx ou .csv). O tipo é reconhecido sozinho.</p>
       <input type="file" id="file" accept=".xls,.xlsx,.csv" multiple hidden></div>
     <div class="opts"><div class="f" style="max-width:260px"><label for="pm">Mês das metas</label><input type="month" id="pm"><small>O resumo de metas não traz o mês. Vazio = o sistema identifica pelas vendas do demonstrativo do mesmo mês (envie os dois juntos).</small></div>
       <label style="display:flex;gap:6px;align-items:center"><input type="checkbox" id="fz"> Reimportar mesmo se o arquivo já foi importado</label></div>
@@ -537,7 +538,7 @@ function telaImportar(el) {
         const r = await api("POST", "/api/importar", fd);
         if (r.ignorada) { item.innerHTML = `<b>${esc(f.name)}</b>: igual ao último importado. Nada mudou.`; continue; }
         item.className = "msg ok";
-        item.innerHTML = `<b>${esc(f.name)}</b> → ${r.tipo === "vendas" ? "Demonstrativo de vendas" : "Resumo de metas"} de ${r.periodos.map(perLabel).join(", ")}: ${num(r.linhas)} linhas${r.substituidas ? ` (substituíram ${num(r.substituidas)} importadas antes)` : ""}.${r.avisos.map(a => `<br>⚠ ${esc(a)}`).join("")}`;
+        item.innerHTML = `<b>${esc(f.name)}</b> → ${NOME_CARGA[r.tipo]} de ${r.periodos.map(perLabel).join(", ")}: ${num(r.linhas)} linhas${r.substituidas ? ` (substituíram ${num(r.substituidas)} importadas antes)` : ""}.${r.avisos.map(a => `<br>⚠ ${esc(a)}`).join("")}`;
         S.periodo = r.periodos.at(-1);
       } catch (e) { item.className = "msg err"; item.innerHTML = `<b>${esc(f.name)}</b>: ${esc(e.message)}`; }
     }
@@ -556,7 +557,7 @@ async function telaCargas(el) {
       <a class="btn ghost small" href="/api/exportar/base.db">Base completa (SQLite)</a></div></div>
     <div class="card"><h3>Importações</h3><div class="hint">Desfazer remove as notas e metas que vieram daquela planilha. Cadastros criados por ela continuam.</div><div class="tbl" id="t-cargas"></div></div></section>`;
   tabela($("t-cargas"), [
-    { k: "id", t: "#", n: 1 }, { k: "tipo", t: "Relatório", f: v => v === "vendas" ? "Demonstrativo de vendas" : "Resumo de metas" }, { k: "arquivo", t: "Arquivo" },
+    { k: "id", t: "#", n: 1 }, { k: "tipo", t: "Relatório", f: v => NOME_CARGA[v] || v }, { k: "arquivo", t: "Arquivo" },
     { k: "periodos", t: "Período", f: v => String(v).split(",").map(perLabel).join(", ") }, { k: "linhas", t: "Linhas", n: 1, f: v => num(v) },
     { k: "emitido_em", t: "Emitido em" }, { k: "usuario_relatorio", t: "Usuário" }, { k: "importado_em", t: "Importado em" },
     { k: "id", t: "", f: (v, r) => `${r.tipo === "metas" ? `<button class="btn link" data-mes="${v}">Trocar mês</button>` : ""}<button class="btn link" data-desf="${v}">Desfazer</button>` },
@@ -601,8 +602,131 @@ async function telaValidacao(el) {
   ], conc, null);
 }
 
+/* ============================================================ itens foco */
+const NOME_CARGA = { vendas: "Demonstrativo de vendas", metas: "Resumo de metas", pedidos: "Pedidos (itens foco)" };
+const estFoco = { periodo: null, dia: "" };
+const situacaoPrevisto = p => p == null ? "none" : p >= 1 ? "good" : p >= 0.9 ? "warn" : "crit";
+const STATUS_PREV = { good: ["✔", "No previsto"], warn: ["▲", "Perto do previsto"], crit: ["✖", "Abaixo do previsto"], none: ["–", "Sem meta"] };
+const pillPrev = s => `<span class="pill ${s}">${STATUS_PREV[s][0]} ${STATUS_PREV[s][1]}</span>`;
+
+async function telaFoco(el) {
+  if (!S.periodo) { el.innerHTML = semPeriodo(); return; }
+  if (estFoco.periodo !== S.periodo) { estFoco.periodo = S.periodo; estFoco.dia = ""; }
+  const f = await api("GET", "/api/foco?" + qs({ periodo: S.periodo, dia: estFoco.dia }));
+  if (!f.itens.length) {
+    el.innerHTML = `<section class="panel"><div class="card"><h3>Nenhum item foco em ${perLabel(S.periodo)}</h3>
+      <div class="hint">Escolha os produtos que vão ser acompanhados de perto no mês e, se quiser, uma meta própria para cada um. Sem meta própria, vale a soma das metas do produto no resumo de metas.</div>
+      <div class="toolbar"><button class="btn" id="fc">Escolher itens foco</button></div></div></section>`;
+    $("fc").onclick = () => formFoco(); return;
+  }
+  const t = f.totais, dias = [...new Set([f.dia, ...f.dias_com_dados])].sort().reverse();
+  el.innerHTML = `<section class="panel">
+    <div class="toolbar"><label for="fd" class="summary">Dia de referência</label>
+      <select id="fd">${dias.map(d => `<option value="${d}" ${d === f.dia ? "selected" : ""}>${dataBR(d)}</option>`).join("")}</select>
+      <span class="grow"></span>
+      <button class="btn ghost" id="fsql">SELECT para o Sankhya</button><button class="btn" id="fcfg">Itens e metas</button></div>
+    <div class="meta-line" style="margin-top:0"><span>Dia útil <b>${f.dias_decorridos} de ${f.dias_uteis}</b> (seg–sáb) · previsto = meta × ${f.dias_decorridos}/${f.dias_uteis} ·
+      ${f.pedidos.importados ? `pedidos importados de <b>${esc(f.pedidos.arquivo)}</b> em ${esc(f.pedidos.importado_em)}` : `<b>sem pedidos importados no mês</b>. A carteira vem do resumo de metas. Para ver os pedidos do dia, importe o resultado da consulta C`}</span></div>
+    <div class="kpis">
+      ${kpi("Realizado no mês", ton(t.realizado_kg), `${pct(t.perc_meta)} da meta · ${pct(t.perc_previsto)} do previsto · ${brlC(t.realizado_vlr)}`, "hero")}
+      ${kpi("Meta do mês", ton(t.meta_kg), `previsto até ${dataBR(f.dia)}: ${ton(t.previsto_kg)}`)}
+      ${kpi("Pedidos no dia", num(t.pedidos_dia), `${ton(t.pedido_dia_kg)} · ${brlC(t.pedido_dia_vlr)}`)}
+      ${kpi("Faturado no dia", ton(t.faturado_dia_kg), dataBR(f.dia))}
+      ${kpi("Carteira", ton(t.carteira_kg), "pedidos ainda não faturados")}
+      ${kpi("Projeção", ton(t.projecao_kg), `realizado + carteira · ${pct(div(t.projecao_kg, t.meta_kg))} da meta`)}
+      ${kpi("Necessário por dia", t.necessario_dia_kg == null ? "–" : ton(t.necessario_dia_kg), `para fechar a meta em ${f.dias_restantes} dias úteis`)}
+    </div>
+    <div class="card"><h3>Meta x realizado por item</h3><div class="hint">kg no mês; barra = realizado, clara = carteira, traço = meta, tracejado = previsto até o dia</div>${bulletFoco(f.itens)}</div>
+    <div class="tbl" id="t-foco"></div>
+    <div class="card"><h3>Faturado por dia (kg)</h3><div class="hint">Vendas − devoluções de cada item por data de movimento</div><div class="tbl" id="t-fdia" style="max-height:420px"></div></div></section>`;
+  tabela($("t-foco"), [
+    { k: "descrprod", t: "Item", f: (v, r) => `<b>${r.codprod}</b> — ${esc(v)}` },
+    { k: "perc_previsto", t: "Situação", f: v => pillPrev(situacaoPrevisto(v)) },
+    { k: "meta_kg", t: "Meta kg", n: 1, f: (v, r) => `${num(v)}${r.fonte_meta === "definida" ? "" : ` <span class="tag">${r.fonte_meta}</span>`}` },
+    { k: "previsto_kg", t: "Previsto kg", n: 1, f: v => num(v) },
+    { k: "realizado_kg", t: "Realizado kg", n: 1, f: v => num(v, 1) },
+    { k: "perc_meta", t: "% meta", n: 1, f: v => pct(v) },
+    { k: "perc_previsto", t: "% previsto", n: 1, f: v => pct(v) },
+    { k: "faturado_dia_kg", t: "Faturado no dia", n: 1, f: v => num(v, 1) },
+    { k: "pedidos_dia", t: "Pedidos no dia", n: 1, f: (v, r) => `${num(v)}${r.clientes_pedido_dia ? ` <span class="summary">${num(r.clientes_pedido_dia)} cli.</span>` : ""}` },
+    { k: "pedido_dia_kg", t: "Kg pedido no dia", n: 1, f: v => num(v, 1) },
+    { k: "pedidos_mes", t: "Pedidos no mês", n: 1, f: v => num(v) },
+    { k: "carteira_kg", t: "Carteira kg", n: 1, f: v => num(v) },
+    { k: "projecao_kg", t: "Projeção kg", n: 1, f: v => num(v) },
+    { k: "falta_kg", t: "Falta kg", n: 1, f: v => num(v) },
+    { k: "necessario_dia_kg", t: "Necessário/dia", n: 1, f: v => num(v) },
+    { k: "realizado_vlr", t: "Realizado R$", n: 1, f: v => brl(v) },
+  ], f.itens, null);
+  // matriz dia x item
+  const porDia = {}; f.diario.forEach(r => { (porDia[r.data] ||= {})[r.codprod] = r.kg; });
+  const datas = Object.keys(porDia).sort().reverse();
+  $("t-fdia").innerHTML = `<table><thead><tr><th>Data</th>${f.itens.map(i => `<th class="n" title="${esc(i.descrprod)}">${i.codprod}</th>`).join("")}<th class="n">Total</th></tr></thead><tbody>
+    ${datas.map(d => `<tr${d === f.dia ? ' style="font-weight:700"' : ""}><td>${dataBR(d)}</td>${f.itens.map(i => `<td class="n">${porDia[d][i.codprod] ? num(porDia[d][i.codprod]) : ""}</td>`).join("")}<td class="n">${num(Object.values(porDia[d]).reduce((a, b) => a + b, 0))}</td></tr>`).join("") || `<tr><td colspan="${f.itens.length + 2}" class="empty">Sem notas no mês.</td></tr>`}</tbody></table>`;
+  $("fd").onchange = e => { estFoco.dia = e.target.value; telaFoco(el); };
+  $("fcfg").onclick = () => formFoco();
+  $("fsql").onclick = () => verSqlFoco();
+  bindTips(el);
+}
+
+function bulletFoco(itens) {
+  const max = Math.max(...itens.map(i => Math.max(i.meta_kg || 0, i.realizado_kg + Math.max(i.carteira_kg, 0))), 1), p = v => Math.max(0, v / max * 100);
+  return `<div class="legend"><span><i class="sw" style="background:var(--accent)"></i>Realizado</span><span><i class="sw" style="background:var(--accent-soft)"></i>Carteira</span><span><i class="sw tick"></i>Meta</span><span><i class="sw" style="width:0;height:14px;border-left:2px dashed var(--ink-2);border-radius:0"></i>Previsto até o dia</span></div>
+  <div class="hbars">${itens.map(i => `<div class="hrow" data-tip="<b>${i.codprod} — ${esc(i.descrprod)}</b><br>Meta: ${num(i.meta_kg)} kg<br>Previsto até o dia: ${num(i.previsto_kg)} kg<br>Realizado: ${num(i.realizado_kg)} kg (${pct(i.perc_meta)} da meta)<br>Carteira: ${num(i.carteira_kg)} kg<br><span class=k>Pedidos no dia: ${num(i.pedidos_dia)} · ${num(i.pedido_dia_kg)} kg</span>">
+    <span class="lab" title="${esc(i.descrprod)}">${i.codprod} — ${esc(i.descrprod)}</span>
+    <span class="track"><span class="b c" style="width:${p(i.realizado_kg + Math.max(i.carteira_kg, 0))}%"></span><span class="b v" style="width:${p(i.realizado_kg)}%"></span>
+      <span style="position:absolute;top:-2px;bottom:-2px;left:${p(i.previsto_kg)}%;border-left:2px dashed var(--ink-2)"></span><span class="t" style="left:${p(i.meta_kg || 0)}%"></span></span>
+    <span class="val">${pct(i.perc_meta, 0)}</span></div>`).join("")}</div>`;
+}
+
+async function formFoco() {
+  const [cfg] = await Promise.all([api("GET", `/api/foco/config?periodo=${S.periodo}`), opcoesCad("produtos")]);
+  let itens = cfg.itens;
+  if (!itens.length) {   // começa pelos itens do mês anterior, ou pelos sugeridos
+    const [a, m] = S.periodo.split("-").map(Number), ant = `${m === 1 ? a - 1 : a}-${String(m === 1 ? 12 : m - 1).padStart(2, "0")}`;
+    const prev = (await api("GET", `/api/foco/config?periodo=${ant}`)).itens;
+    itens = prev.length ? prev.map(i => ({ codprod: i.codprod, descrprod: i.descrprod, meta_kg: i.meta_kg }))
+                        : cfg.sugeridos.map(c => ({ codprod: c, descrprod: nomeDe("produtos", c) }));
+  }
+  const linha = i => `<tr>
+    <td class="cell" style="min-width:300px"><input list="fprod-l" data-cad="produtos" data-k="codprod" value="${i.codprod != null ? esc(i.codprod + " — " + (i.descrprod ?? nomeDe("produtos", i.codprod) ?? "")) : ""}" placeholder="Produto"></td>
+    <td class="cell n" style="width:170px"><input data-k="meta_kg" inputmode="decimal" value="${i.meta_kg != null ? num(i.meta_kg, 0) : ""}" placeholder="${i.meta_resumo ? "resumo: " + num(i.meta_resumo) : "do resumo"}"></td>
+    <td><button class="btn link" data-rm title="Remover">✕</button></td></tr>`;
+  const d = gaveta({
+    titulo: `Itens foco de ${perLabel(S.periodo)}`, sub: "Produtos acompanhados no mês e a meta de cada um (kg)",
+    corpo: `<div class="itens"><table><thead><tr><th>Produto</th><th class="n">Meta do mês (kg)</th><th></th></tr></thead><tbody id="f-itens">${itens.map(linha).join("")}</tbody></table></div>
+      <datalist id="fprod-l">${CACHE.produtos.map(o => `<option value="${esc(o.codigo + " — " + o.nome)}">`).join("")}</datalist>
+      <div class="toolbar"><button class="btn ghost small" id="f-add">+ Adicionar item</button></div>
+      <div class="note">Meta em branco = soma das metas do produto no resumo de metas do mês. A SELECT para o Sankhya é gerada com estes itens e metas.</div>`,
+    salvar: async d => {
+      const lista = [...d.querySelectorAll("#f-itens tr")].map(tr => {
+        const p = tr.querySelector('[data-k="codprod"]'), m = tr.querySelector('[data-k="meta_kg"]');
+        if (!p.value.trim()) return null;
+        return { codprod: lerLookup(p), meta_kg: m.value.trim() || null };
+      }).filter(Boolean);
+      await api("PUT", "/api/foco/config", { periodo: S.periodo, itens: lista });
+      toast("Itens foco salvos."); render();
+    },
+  });
+  const ligar = () => d.querySelectorAll("[data-rm]").forEach(b => b.onclick = () => b.closest("tr").remove());
+  d.querySelector("#f-add").onclick = () => { d.querySelector("#f-itens").insertAdjacentHTML("beforeend", linha({})); ligar(); d.querySelector("#f-itens tr:last-child input").focus(); };
+  ligar();
+}
+
+async function verSqlFoco() {
+  const sql = await (await fetch(`/api/foco/sql?periodo=${S.periodo}`)).text();
+  const d = gaveta({
+    titulo: "SELECT para o Sankhya (Oracle)", sub: "Gerada com os itens e metas configurados · somente leitura",
+    corpo: `<div class="note">Rode cada consulta (A, B, C, D) separadamente no DbExplorer. <b>A</b>: acompanhamento por item · <b>B</b>: por vendedor · <b>C</b>: pedidos do mês, para importar aqui em Dados › Importar planilhas · <b>D</b>: conferência de setembro/2026.</div>
+      <div class="toolbar"><button class="btn small" id="sql-copiar">Copiar SELECT</button><a class="btn ghost small" href="/api/foco/sql?periodo=${S.periodo}" download="itens_foco_${S.periodo}.sql">Baixar .sql</a></div>
+      <pre style="white-space:pre;overflow:auto;max-height:60vh;background:var(--surface-2);border-radius:10px;padding:12px;font-size:12px;margin:0">${esc(sql)}</pre>`,
+  });
+  d.querySelector("#sql-copiar").onclick = async () => {
+    try { await navigator.clipboard.writeText(sql); toast("SELECT copiada."); } catch (_) { toast("Não foi possível copiar; selecione o texto e use Ctrl+C.", true); }
+  };
+}
+
 /* ============================================================ navegação */
-const TELAS = { geral: telaGeral, "analise-metas": telaAnaliseMetas, "analise-vendas": telaAnaliseVendas, notas: telaNotas, metas: telaMetas, importar: telaImportar, cargas: telaCargas, validacao: telaValidacao };
+const TELAS = { foco: telaFoco, geral: telaGeral, "analise-metas": telaAnaliseMetas, "analise-vendas": telaAnaliseVendas, notas: telaNotas, metas: telaMetas, importar: telaImportar, cargas: telaCargas, validacao: telaValidacao };
 
 async function carregarInicio() {
   S.inicio = await api("GET", "/api/inicio");

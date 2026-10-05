@@ -17,6 +17,7 @@ em ``codreg`` (101003026) e ``nomereg`` ("ZV131 - VILMAR").
 
 VENDAS = "vendas"
 METAS = "metas"
+PEDIDOS = "pedidos"
 
 LAYOUTS = {
     VENDAS: {
@@ -96,6 +97,34 @@ LAYOUTS = {
             "Valor Fat. Previsto": ("vlr_previsto_rel", "float", "derivado: qtd_meta * pm_meta"),
         },
         "obrigatorias": ["Vendedor", "Cód.", "Meta", "Vendido"],
+    },
+    # Resultado da consulta C de vendas_bi/sankhya/itens_foco.sql (pedidos TGFCAB TIPMOV = 'P').
+    PEDIDOS: {
+        "titulo": "Pedidos de venda (consulta C - itens foco)",
+        "tabela": "pedido",
+        "colunas": {
+            "NUNOTA": ("nunota", "int", "TGFCAB.NUNOTA"),
+            "NUMNOTA": ("numnota", "int", "TGFCAB.NUMNOTA"),
+            "DTNEG": ("dtneg", "date", "TGFCAB.DTNEG"),
+            "CODEMP": ("codemp", "int", "TGFCAB.CODEMP"),
+            "CODTIPOPER": ("codtipoper", "int", "TGFCAB.CODTIPOPER"),
+            "CODPARC": ("codparc", "int", "TGFCAB.CODPARC"),
+            "NOMEPARC": ("nomeparc", "str", "TGFPAR.NOMEPARC"),
+            "CODVEND": ("codvend", "int", "TGFCAB.CODVEND"),
+            "VENDEDOR": ("vendedor", "str", "TGFVEN.APELIDO"),
+            "SEQUENCIA": ("sequencia", "int", "TGFITE.SEQUENCIA"),
+            "CODPROD": ("codprod", "int", "TGFITE.CODPROD"),
+            "DESCRPROD": ("descrprod", "str", "TGFPRO.DESCRPROD"),
+            "CODVOL": ("codvol", "str", "TGFITE.CODVOL"),
+            "QTDNEG": ("qtdneg", "float", "TGFITE.QTDNEG"),
+            "QTD_KG": ("qtd_kg", "float", "QTDNEG em kg"),
+            "VLRTOT": ("vlrtot", "float", "TGFITE.VLRTOT"),
+            "PENDENTE_KG": ("pendente_kg", "float", "QTDNEG - QTDENTREGUE, em kg"),
+            "PENDENTE": ("pendente", "str", "TGFITE.PENDENTE"),
+        },
+        "obrigatorias": ["NUNOTA", "DTNEG", "CODPROD", "QTD_KG"],
+        "opcionais": ["NUMNOTA", "CODEMP", "CODTIPOPER", "NOMEPARC", "VENDEDOR", "SEQUENCIA", "DESCRPROD",
+                      "CODVOL", "QTDNEG", "VLRTOT", "PENDENTE_KG", "PENDENTE", "CODPARC", "CODVEND"],
     },
 }
 

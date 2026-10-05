@@ -148,6 +148,29 @@ def criar_app(caminho_banco: str | Path | None = None) -> FastAPI:
         d = await request.json()
         return {"copiadas": s.copiar_metas(conn, d.get("de"), d.get("para"))}
 
+    # ------------------------------------------------------------ itens foco
+    @app.get("/api/foco")
+    def foco(periodo: str, dia: str = ""):
+        return s.acompanhamento_foco(conn, periodo, dia or None)
+
+    @app.get("/api/foco/config")
+    def foco_config(periodo: str):
+        return {"itens": s.foco_config(conn, periodo), "sugeridos": s.ITENS_FOCO_SUGERIDOS}
+
+    @app.put("/api/foco/config")
+    async def foco_salvar(request: Request):
+        d = await request.json()
+        return s.salvar_foco_config(conn, d.get("periodo"), d.get("itens") or [])
+
+    @app.post("/api/foco/copiar")
+    async def foco_copiar(request: Request):
+        d = await request.json()
+        return s.copiar_foco(conn, d.get("de"), d.get("para"))
+
+    @app.get("/api/foco/sql")
+    def foco_sql(periodo: str):
+        return Response(s.sql_foco(conn, periodo), media_type="text/plain; charset=utf-8")
+
     # ------------------------------------------------------------ importação e cargas
     @app.post("/api/importar")
     async def importar_planilha(arquivo: UploadFile = File(...), periodo_meta: str = Form(""), forcar: bool = Form(False)):
