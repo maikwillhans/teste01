@@ -645,9 +645,103 @@ def acompanhamento_foco(conn, periodo: str, dia: str | None = None) -> dict:
     return {
         "periodo": periodo, "dia": dia, "dias_uteis": total_uteis, "dias_decorridos": decorridos, "dias_restantes": restantes,
         "itens": linhas, "totais": totais, "diario": diario, "dias_com_dados": dias_com_dados,
+        "por_vendedor": _foco_por_vendedor(conn, periodo, dia, cods, tem_pedidos, decorridos / total_uteis if total_uteis else 0),
+        "dia_a_dia": _foco_dia_a_dia(conn, periodo, linhas, total_uteis),
         "pedidos": {"importados": tem_pedidos, "arquivo": carga_ped[0] if carga_ped else None,
                     "importado_em": carga_ped[1] if carga_ped else None},
     }
+
+
+def _foco_por_vendedor(conn, periodo: str, dia: str, cods: list[int], tem_pedidos: bool, fracao: float) -> list[dict]:
+    """Itens foco por vendedor: meta do resumo, realizado, dia, pedidos e carteira (uma linha por vendedor x item)."""
+    if not cods:
+        return []
+    marc = ",".join("?" * len(cods))
+    linhas: dict[tuple, dict] = {}
+
+    def linha(codvend, vendedor, supervisor, codprod):
+        chave = (codvend, codprod)
+        if chave not in linhas:
+            linhas[chave] = {"codvend": codvend, "vendedor": vendedor, "supervisor": supervisor, "codprod": codprod,
+                             "meta_kg": 0.0, "realizado_kg": 0.0, "realizado_vlr": 0.0, "faturado_dia_kg": 0.0,
+                             "clientes": 0, "pedidos_dia": 0, "pedido_dia_kg": 0.0, "carteira_kg": 0.0}
+        l = linhas[chave]
+        l["vendedor"] = l["vendedor"] or vendedor
+        l["supervisor"] = l["supervisor"] or supervisor
+        return l
+
+    for cv, vend, sup, cp, meta, fech in conn.execute(
+            f"""SELECT codvend, vendedor, supervisor, codprod, SUM(qtd_meta), SUM(qtd_fechada) FROM vw_meta
+                WHERE periodo = ? AND codprod IN ({marc}) GROUP BY codvend, codprod""", (periodo, *cods)):
+        l = linha(cv, vend, sup, cp)
+        l["meta_kg"] = meta or 0
+        if not tem_pedidos:
+            l["carteira_kg"] = fech or 0
+    for cv, vend, sup, cp, kg, vlr, kg_dia, cli in conn.execute(
+            f"""SELECT codvend, vendedor, supervisor, codprod, SUM(qtd_kg), SUM(vlrtot),
+                       SUM(CASE WHEN dtmov = ? THEN qtd_kg ELSE 0 END), COUNT(DISTINCT CASE WHEN operacao = 'V' THEN codparc END)
+                FROM vw_venda WHERE periodo = ? AND operacao IN ('V','D') AND codprod IN ({marc})
+                GROUP BY codvend, codprod""", (dia, periodo, *cods)):
+        l = linha(cv, vend, sup, cp)
+        l.update(realizado_kg=kg or 0, realizado_vlr=vlr or 0, faturado_dia_kg=kg_dia or 0, clientes=cli or 0)
+    if tem_pedidos:
+        for cv, vend, cp, n, kg_dia, pend in conn.execute(
+                f"""SELECT p.codvend, COALESCE(v.apelido, MAX(p.vendedor)), p.codprod,
+                           COUNT(DISTINCT CASE WHEN p.dtneg = ? THEN p.nunota END),
+                           SUM(CASE WHEN p.dtneg = ? THEN p.qtd_kg ELSE 0 END), SUM(p.pendente_kg)
+                    FROM pedido p LEFT JOIN vendedor v ON v.codvend = p.codvend
+                    WHERE substr(p.dtneg,1,7) = ? AND p.dtneg <= ? AND p.codprod IN ({marc})
+                    GROUP BY p.codvend, p.codprod""", (dia, dia, periodo, dia, *cods)):
+            l = linha(cv, vend, None, cp)
+            l.update(pedidos_dia=n or 0, pedido_dia_kg=kg_dia or 0, carteira_kg=pend or 0)
+    out = []
+    for l in linhas.values():
+        l["previsto_kg"] = l["meta_kg"] * fracao
+        l["perc_meta"] = l["realizado_kg"] / l["meta_kg"] if l["meta_kg"] else None
+        l["perc_previsto"] = l["realizado_kg"] / l["previsto_kg"] if l["previsto_kg"] else None
+        l["falta_kg"] = max(l["meta_kg"] - l["realizado_kg"] - l["carteira_kg"], 0)
+        l["vendedor"] = l["vendedor"] or f"Vendedor {l['codvend']}"
+        out.append(l)
+    return sorted(out, key=lambda l: (-l["meta_kg"], -l["realizado_kg"]))
+
+
+def _foco_dia_a_dia(conn, periodo: str, itens: list[dict], total_uteis: int) -> list[dict]:
+    """Todos os dias do mês: meta do dia, realizado e pedidos por item (o acumulado é feito na tela)."""
+    from calendar import monthrange
+    from datetime import date
+
+    ano, mes = map(int, periodo.split("-"))
+    cods = [i["codprod"] for i in itens]
+    marc = ",".join("?" * len(cods)) or "NULL"
+    real: dict[str, dict] = {}
+    for d, cp, kg, vlr in conn.execute(
+            f"""SELECT dtmov, codprod, SUM(qtd_kg), SUM(vlrtot) FROM vw_venda
+                WHERE periodo = ? AND operacao IN ('V','D') AND codprod IN ({marc}) GROUP BY dtmov, codprod""", (periodo, *cods)):
+        real.setdefault(d, {})[cp] = {"kg": kg or 0, "vlr": vlr or 0}
+    ped: dict[str, dict] = {}
+    for d, cp, n, kg in conn.execute(
+            f"""SELECT dtneg, codprod, COUNT(DISTINCT nunota), SUM(qtd_kg) FROM pedido
+                WHERE substr(dtneg,1,7) = ? AND codprod IN ({marc}) GROUP BY dtneg, codprod""", (periodo, *cods)):
+        ped.setdefault(d, {})[cp] = {"pedidos": n or 0, "kg": kg or 0}
+    ped_total = {d: n for d, n in conn.execute(
+        f"SELECT dtneg, COUNT(DISTINCT nunota) FROM pedido WHERE substr(dtneg,1,7) = ? AND codprod IN ({marc}) GROUP BY dtneg",
+        (periodo, *cods))}
+    metas = {i["codprod"]: i["meta_kg"] or 0 for i in itens}
+    dias = []
+    for n in range(1, monthrange(ano, mes)[1] + 1):
+        dt = date(ano, mes, n)
+        d = dt.isoformat()
+        util = dt.weekday() != 6
+        dias.append({
+            "data": d, "semana": ["seg", "ter", "qua", "qui", "sex", "sáb", "dom"][dt.weekday()], "util": util,
+            "meta": {cp: (m / total_uteis if util and total_uteis else 0) for cp, m in metas.items()},
+            "realizado": {cp: v["kg"] for cp, v in real.get(d, {}).items()},
+            "valor": {cp: v["vlr"] for cp, v in real.get(d, {}).items()},
+            "pedidos": {cp: v["pedidos"] for cp, v in ped.get(d, {}).items()},
+            "pedido_kg": {cp: v["kg"] for cp, v in ped.get(d, {}).items()},
+            "pedidos_total": ped_total.get(d, 0),
+        })
+    return dias
 
 
 def copiar_foco(conn, de: str, para: str) -> list[dict]:

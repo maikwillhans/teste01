@@ -608,7 +608,7 @@ async function telaValidacao(el) {
 
 /* ============================================================ itens foco */
 const NOME_CARGA = { vendas: "Demonstrativo de vendas", metas: "Resumo de metas", pedidos: "Pedidos (itens foco)" };
-const estFoco = { periodo: null, dia: "" };
+const estFoco = { periodo: null, dia: "", visao: "item", item: "" };
 const situacaoPrevisto = p => p == null ? "none" : p >= 1 ? "good" : p >= 0.9 ? "warn" : "crit";
 const STATUS_PREV = { good: ["✔", "No previsto"], warn: ["▲", "Perto do previsto"], crit: ["✖", "Abaixo do previsto"], none: ["–", "Sem meta"] };
 const pillPrev = s => `<span class="pill ${s}">${STATUS_PREV[s][0]} ${STATUS_PREV[s][1]}</span>`;
@@ -643,9 +643,25 @@ async function telaFoco(el) {
       ${kpi("Projeção", ton(t.projecao_kg), `realizado + carteira · ${pct(div(t.projecao_kg, t.meta_kg))} da meta`)}
       ${kpi("Necessário por dia", t.necessario_dia_kg == null ? "–" : ton(t.necessario_dia_kg), `para fechar a meta em ${f.dias_restantes} dias úteis`)}
     </div>
-    <div class="card"><h3>Meta x realizado por item</h3><div class="hint">kg no mês; barra = realizado, clara = carteira, traço = meta, tracejado = previsto até o dia</div>${bulletFoco(f.itens)}</div>
-    <div class="tbl" id="t-foco"></div>
-    <div class="card"><h3>Faturado por dia (kg)</h3><div class="hint">Vendas − devoluções de cada item por data de movimento</div><div class="tbl" id="t-fdia" style="max-height:420px"></div></div></section>`;
+    <div class="toolbar"><div class="seg">${[["item", "Por item"], ["vendedor", "Por vendedor"], ["diario", "Acompanhamento diário"]].map(([k, t]) => `<button data-fv="${k}" aria-pressed="${estFoco.visao === k}">${t}</button>`).join("")}</div>
+      ${estFoco.visao !== "item" ? `<label for="fi" class="summary">Item</label><select id="fi"><option value="">Todos os itens foco</option>${f.itens.map(i => `<option value="${i.codprod}" ${String(estFoco.item) === String(i.codprod) ? "selected" : ""}>${i.codprod} — ${esc(i.descrprod)}</option>`).join("")}</select>` : ""}</div>
+    <div id="f-visao" style="display:grid;gap:18px"></div></section>`;
+  if (estFoco.item && !f.itens.some(i => String(i.codprod) === String(estFoco.item))) estFoco.item = "";
+  const vis = $("f-visao");
+  if (estFoco.visao === "vendedor") focoVendedor(vis, f);
+  else if (estFoco.visao === "diario") focoDiario(vis, f);
+  else focoItem(vis, f);
+  el.querySelectorAll("[data-fv]").forEach(b => b.onclick = () => { estFoco.visao = b.dataset.fv; telaFoco(el); });
+  if ($("fi")) $("fi").onchange = e => { estFoco.item = e.target.value; telaFoco(el); };
+  $("fd").onchange = e => { estFoco.dia = e.target.value; telaFoco(el); };
+  $("fcfg").onclick = () => formFoco();
+  $("fsql").onclick = () => verSqlFoco();
+  bindTips(el);
+}
+
+function focoItem(vis, f) {
+  vis.innerHTML = `<div class="card"><h3>Meta x realizado por item</h3><div class="hint">kg no mês; barra = realizado, clara = carteira, traço = meta, tracejado = previsto até o dia</div>${bulletFoco(f.itens)}</div>
+    <div class="tbl" id="t-foco"></div>`;
   tabela($("t-foco"), [
     { k: "descrprod", t: "Item", f: (v, r) => `<b>${r.codprod}</b> — ${esc(v)}` },
     { k: "perc_previsto", t: "Situação", f: v => pillPrev(situacaoPrevisto(v)) },
@@ -664,22 +680,137 @@ async function telaFoco(el) {
     { k: "necessario_dia_kg", t: "Necessário/dia", n: 1, f: v => num(v) },
     { k: "realizado_vlr", t: "Realizado R$", n: 1, f: v => brl(v) },
   ], f.itens, null);
-  // matriz dia x item
-  const porDia = {}; f.diario.forEach(r => { (porDia[r.data] ||= {})[r.codprod] = r.kg; });
-  const datas = Object.keys(porDia).sort().reverse();
-  $("t-fdia").innerHTML = `<table><thead><tr><th>Data</th>${f.itens.map(i => `<th class="n" title="${esc(i.descrprod)}">${i.codprod}</th>`).join("")}<th class="n">Total</th></tr></thead><tbody>
-    ${datas.map(d => `<tr${d === f.dia ? ' style="font-weight:700"' : ""}><td>${dataBR(d)}</td>${f.itens.map(i => `<td class="n">${porDia[d][i.codprod] ? num(porDia[d][i.codprod]) : ""}</td>`).join("")}<td class="n">${num(Object.values(porDia[d]).reduce((a, b) => a + b, 0))}</td></tr>`).join("") || `<tr><td colspan="${f.itens.length + 2}" class="empty">Sem notas no mês.</td></tr>`}</tbody></table>`;
-  $("fd").onchange = e => { estFoco.dia = e.target.value; telaFoco(el); };
-  $("fcfg").onclick = () => formFoco();
-  $("fsql").onclick = () => verSqlFoco();
-  bindTips(el);
 }
 
-function bulletFoco(itens) {
+/* ---------- itens foco por vendedor ---------- */
+function focoVendedor(vis, f) {
+  const item = estFoco.item ? +estFoco.item : null;
+  const base = f.por_vendedor.filter(r => !item || r.codprod === item);
+  const soma = ["meta_kg", "previsto_kg", "realizado_kg", "realizado_vlr", "faturado_dia_kg", "pedidos_dia", "pedido_dia_kg", "carteira_kg", "falta_kg", "clientes"];
+  const porVend = {};
+  base.forEach(r => {
+    const v = porVend[r.codvend] ||= { codvend: r.codvend, vendedor: r.vendedor, supervisor: r.supervisor, itens: 0, ...Object.fromEntries(soma.map(k => [k, 0])) };
+    soma.forEach(k => v[k] += r[k] || 0); v.itens += r.realizado_kg || r.meta_kg ? 1 : 0;
+    v.supervisor ||= r.supervisor;
+  });
+  const linhas = Object.values(porVend).map(v => ({ ...v, perc_meta: div(v.realizado_kg, v.meta_kg), perc_previsto: div(v.realizado_kg, v.previsto_kg) }))
+    .sort((a, b) => b.meta_kg - a.meta_kg || b.realizado_kg - a.realizado_kg);
+  const nomeItem = item ? f.itens.find(i => i.codprod === item)?.descrprod : null;
+  vis.innerHTML = `
+    <div class="card"><h3>Meta x realizado por vendedor ${item ? `· ${item} — ${esc(nomeItem)}` : "· todos os itens foco"}</h3>
+      <div class="hint">kg no mês. Meta de cada vendedor = soma das metas dos itens no Resumo de Metas. ${num(linhas.length)} vendedores.</div>
+      ${bulletFoco(linhas.filter(l => l.meta_kg || l.realizado_kg).slice(0, 40).map(l => ({ ...l, codprod: l.codvend, descrprod: l.vendedor })), l => `${esc(l.descrprod)}`)}</div>
+    <div class="tbl" id="t-fvend"></div>
+    ${!item ? `<div class="card"><h3>Vendedor x item</h3><div class="hint">Realizado em kg e % da meta de cada vendedor em cada item foco. Passe o mouse para ver meta e carteira.</div><div class="tbl" id="t-fmatriz" style="max-height:560px"></div></div>` : ""}`;
+  tabela($("t-fvend"), [
+    { k: "vendedor", t: "Vendedor", f: (v, r) => `${esc(v)} <span class="summary">${r.codvend}</span>` },
+    { k: "supervisor", t: "Supervisor" },
+    { k: "perc_previsto", t: "Situação", f: v => pillPrev(situacaoPrevisto(v)) },
+    { k: "meta_kg", t: "Meta kg", n: 1, f: v => v ? num(v) : "–" },
+    { k: "previsto_kg", t: "Previsto kg", n: 1, f: v => v ? num(v) : "–" },
+    { k: "realizado_kg", t: "Realizado kg", n: 1, f: v => num(v, 1) },
+    { k: "perc_meta", t: "% meta", n: 1, f: v => pct(v) },
+    { k: "perc_previsto", t: "% previsto", n: 1, f: v => pct(v) },
+    { k: "faturado_dia_kg", t: "Faturado no dia", n: 1, f: v => num(v, 1) },
+    { k: "pedidos_dia", t: "Pedidos no dia", n: 1, f: v => num(v) },
+    { k: "pedido_dia_kg", t: "Kg pedido no dia", n: 1, f: v => num(v, 1) },
+    { k: "carteira_kg", t: "Carteira kg", n: 1, f: v => num(v) },
+    { k: "falta_kg", t: "Falta kg", n: 1, f: v => num(v) },
+    { k: "clientes", t: "Clientes", n: 1, f: v => num(v) },
+    { k: "realizado_vlr", t: "Realizado R$", n: 1, f: v => brl(v) },
+  ], linhas, ["meta_kg", -1]);
+  if (!item) {
+    const cel = {}; f.por_vendedor.forEach(r => { cel[r.codvend + "|" + r.codprod] = r; });
+    $("t-fmatriz").innerHTML = `<table><thead><tr><th>Vendedor</th>${f.itens.map(i => `<th class="n" title="${esc(i.descrprod)}">${i.codprod}</th>`).join("")}<th class="n">Total kg</th></tr></thead><tbody>
+      ${linhas.map(l => `<tr><td>${esc(l.vendedor)}</td>${f.itens.map(i => {
+        const c = cel[l.codvend + "|" + i.codprod];
+        if (!c) return `<td class="n"></td>`;
+        const s = situacaoPrevisto(c.perc_previsto);
+        return `<td class="n" data-tip="<b>${esc(l.vendedor)} · ${i.codprod}</b><br>Meta: ${num(c.meta_kg)} kg<br>Realizado: ${num(c.realizado_kg)} kg (${pct(c.perc_meta)})<br>Previsto até o dia: ${num(c.previsto_kg)} kg<br>Carteira: ${num(c.carteira_kg)} kg">${num(c.realizado_kg)}${c.meta_kg ? ` <span class="pill ${s}" style="padding:0 6px">${pct(c.perc_meta, 0)}</span>` : ""}</td>`;
+      }).join("")}<td class="n"><b>${num(l.realizado_kg)}</b></td></tr>`).join("")}</tbody></table>`;
+  }
+}
+
+/* ---------- acompanhamento diário dos itens foco ---------- */
+function focoDiario(vis, f) {
+  const item = estFoco.item ? +estFoco.item : null;
+  const sel = f.itens.filter(i => !item || i.codprod === item).map(i => i.codprod);
+  const somaDe = obj => sel.reduce((s, c) => s + (obj[c] || 0), 0);
+  let accR = 0, accM = 0;
+  const dias = f.dia_a_dia.map(d => {
+    const futuro = d.data > f.dia;
+    const meta = somaDe(d.meta), real = futuro ? null : somaDe(d.realizado);
+    accM += meta; if (!futuro) accR += real;
+    return { data: d.data, semana: d.semana, util: d.util, futuro, meta, real, dif: futuro ? null : real - meta,
+             acum: futuro ? null : accR, prevAcum: accM, difAcum: futuro ? null : accR - accM, percAcum: futuro ? null : div(accR, accM),
+             valor: futuro ? null : somaDe(d.valor), pedidos: item ? (d.pedidos[item] || 0) : d.pedidos_total, pedKg: somaDe(d.pedido_kg) };
+  });
+  const hoje = dias.filter(d => !d.futuro).at(-1);
+  const metaMes = accM, diasUteis = dias.filter(d => d.util).length;
+  const nomeItem = item ? `${item} — ${esc(f.itens.find(i => i.codprod === item)?.descrprod)}` : "todos os itens foco";
+  vis.innerHTML = `
+    <div class="kpis">
+      ${kpi("Meta do dia", ton(metaMes / (diasUteis || 1)), `${nomeItem} · meta do mês ÷ ${diasUteis} dias úteis`)}
+      ${kpi(`Realizado em ${dataBR(f.dia)}`, ton(hoje?.real), hoje ? `${pct(div(hoje.real, hoje.meta))} da meta do dia` : "")}
+      ${kpi("Acumulado no mês", ton(hoje?.acum), hoje ? `${pct(hoje.percAcum)} do previsto acumulado (${ton(hoje.prevAcum)})` : "")}
+      ${kpi("Diferença acumulada", hoje ? (hoje.difAcum >= 0 ? "+" : "") + ton(hoje.difAcum) : "–", hoje ? (hoje.difAcum >= 0 ? "acima do previsto" : "abaixo do previsto") : "")}
+    </div>
+    <div class="grid2">
+      <div class="card chart"><h3>Realizado por dia x meta do dia</h3><div class="hint">kg · barra = realizado do dia, traço = meta do dia (domingo sem meta)</div>${svgFocoDia(dias)}</div>
+      <div class="card chart"><h3>Acumulado x previsto acumulado</h3><div class="hint">kg acumulados no mês · tracejado = previsto acumulado até o fim do mês</div>${svgFocoAcum(dias, metaMes)}</div>
+    </div>
+    <div class="tbl" id="t-fdia2" style="max-height:640px"></div>`;
+  const sinal = v => v == null ? "" : `<span style="color:${v >= 0 ? "var(--good-ink)" : "var(--crit-ink)"}">${v >= 0 ? "+" : ""}${num(v)}</span>`;
+  $("t-fdia2").innerHTML = `<table><thead><tr><th>Data</th><th>Dia</th><th class="n">Meta do dia</th><th class="n">Realizado</th><th class="n">Dif. do dia</th><th class="n">Acumulado</th><th class="n">Previsto acum.</th><th class="n">Dif. acumulada</th><th class="n">% acum.</th><th>Situação</th><th class="n">Pedidos</th><th class="n">Kg pedido</th><th class="n">Realizado R$</th></tr></thead><tbody>
+    ${dias.map(d => `<tr style="${!d.util ? "color:var(--muted)" : ""}${d.data === f.dia ? ";font-weight:700" : ""}">
+      <td>${dataBR(d.data)}</td><td>${d.semana}</td><td class="n">${d.meta ? num(d.meta) : "–"}</td>
+      <td class="n">${d.futuro ? "" : num(d.real)}</td><td class="n">${d.futuro || !d.util && !d.real ? "" : sinal(d.dif)}</td>
+      <td class="n">${d.futuro ? "" : num(d.acum)}</td><td class="n">${num(d.prevAcum)}</td><td class="n">${sinal(d.difAcum)}</td>
+      <td class="n">${d.futuro ? "" : pct(d.percAcum)}</td><td>${d.futuro ? "" : pillPrev(situacaoPrevisto(d.percAcum))}</td>
+      <td class="n">${d.pedidos || ""}</td><td class="n">${d.pedKg ? num(d.pedKg) : ""}</td><td class="n">${d.futuro || !d.valor ? "" : brl(d.valor)}</td></tr>`).join("")}</tbody></table>`;
+}
+
+function svgFocoDia(dias) {
+  const W = 640, H = 250, pl = 52, pr = 8, pt = 10, pb = 26;
+  const ticks = niceTicks(Math.max(...dias.map(d => Math.max(d.real || 0, d.meta)), 1)), ymax = ticks.at(-1), iw = W - pl - pr, ih = H - pt - pb;
+  const bw = iw / dias.length, gap = Math.min(4, bw * 0.3), y = v => pt + ih - (Math.max(v, 0) / ymax) * ih;
+  let s = `<svg viewBox="0 0 ${W} ${H}" role="img" aria-label="Realizado por dia e meta do dia">`;
+  for (const t of ticks) s += `<line x1="${pl}" x2="${W - pr}" y1="${y(t)}" y2="${y(t)}" stroke="var(--grid)"/><text x="${pl - 6}" y="${y(t) + 4}" text-anchor="end">${eixo(t)}</text>`;
+  dias.forEach((d, i) => {
+    const x = pl + i * bw + gap / 2, w = Math.max(bw - gap, 1), yy = y(d.real || 0), h = pt + ih - yy, r = Math.min(3, w / 2, h);
+    const barra = h > 0 ? `<path d="M${x},${pt + ih} V${yy + r} Q${x},${yy} ${x + r},${yy} H${x + w - r} Q${x + w},${yy} ${x + w},${yy + r} V${pt + ih} Z" fill="var(--accent)"/>` : "";
+    const meta = d.meta ? `<line x1="${x - 1}" x2="${x + w + 1}" y1="${y(d.meta)}" y2="${y(d.meta)}" stroke="var(--ink)" stroke-width="2"/>` : "";
+    s += `<g data-tip="<b>${dataBR(d.data)} (${d.semana})</b><br>Realizado: ${d.futuro ? "–" : num(d.real) + " kg"}<br>Meta do dia: ${num(d.meta)} kg${d.pedidos ? `<br>Pedidos: ${d.pedidos}` : ""}"><rect x="${pl + i * bw}" y="${pt}" width="${bw}" height="${ih}" fill="transparent"/>${barra}${meta}</g>`;
+    if (i % 5 === 0) s += `<text x="${x + w / 2}" y="${H - 8}" text-anchor="middle">${ddmm(d.data)}</text>`;
+  });
+  return s + `<line x1="${pl}" x2="${W - pr}" y1="${pt + ih}" y2="${pt + ih}" stroke="var(--axis)"/></svg>`;
+}
+
+function svgFocoAcum(dias, metaMes) {
+  const W = 640, H = 250, pl = 52, pr = 12, pt = 18, pb = 26;
+  const ultimo = dias.filter(d => !d.futuro).at(-1);
+  const ticks = niceTicks(Math.max(metaMes, ultimo?.acum || 0, 1)), ymax = ticks.at(-1), iw = W - pl - pr, ih = H - pt - pb;
+  const x = i => pl + (dias.length === 1 ? iw / 2 : i / (dias.length - 1) * iw), y = v => pt + ih - (v / ymax) * ih;
+  let s = `<svg viewBox="0 0 ${W} ${H}" role="img" aria-label="Acumulado contra previsto acumulado">`;
+  for (const t of ticks) s += `<line x1="${pl}" x2="${W - pr}" y1="${y(t)}" y2="${y(t)}" stroke="var(--grid)"/><text x="${pl - 6}" y="${y(t) + 4}" text-anchor="end">${eixo(t)}</text>`;
+  s += `<path d="${dias.map((d, i) => `${i ? "L" : "M"}${x(i)},${y(d.prevAcum)}`).join(" ")}" fill="none" stroke="var(--ink-2)" stroke-width="1.5" stroke-dasharray="6 4"/>`;
+  const reais = dias.map((d, i) => ({ d, i })).filter(p => !p.d.futuro);
+  if (reais.length) {
+    s += `<path d="${reais.map((p, k) => `${k ? "L" : "M"}${x(p.i)},${y(p.d.acum)}`).join(" ")}" fill="none" stroke="var(--accent)" stroke-width="2"/>`;
+    reais.forEach(p => { s += `<g data-tip="<b>${dataBR(p.d.data)}</b><br>Acumulado: ${num(p.d.acum)} kg<br>Previsto acumulado: ${num(p.d.prevAcum)} kg<br><span class=k>${pct(p.d.percAcum)} do previsto</span>"><rect x="${x(p.i) - iw / dias.length / 2}" y="${pt}" width="${iw / dias.length}" height="${ih}" fill="transparent"/><circle cx="${x(p.i)}" cy="${y(p.d.acum)}" r="3" fill="var(--accent)" stroke="var(--surface)" stroke-width="1.5"/></g>`; });
+    const u = reais.at(-1);
+    s += `<text x="${x(u.i) + (u.i > dias.length * 0.75 ? -8 : 8)}" y="${y(u.d.acum) - 10}" text-anchor="${u.i > dias.length * 0.75 ? "end" : "start"}" style="fill:var(--ink);font-weight:600">${ton(u.d.acum)}</text>`;
+  }
+  s += `<text x="${W - pr}" y="${y(metaMes) - 6}" text-anchor="end" style="fill:var(--ink-2)">Meta ${ton(metaMes)}</text>`;
+  dias.forEach((d, i) => { if (i % 5 === 0) s += `<text x="${x(i)}" y="${H - 8}" text-anchor="middle">${ddmm(d.data)}</text>`; });
+  return s + `<line x1="${pl}" x2="${W - pr}" y1="${pt + ih}" y2="${pt + ih}" stroke="var(--axis)"/></svg>`;
+}
+
+function bulletFoco(itens, rotulo = i => `${i.codprod} — ${esc(i.descrprod)}`) {
   const max = Math.max(...itens.map(i => Math.max(i.meta_kg || 0, i.realizado_kg + Math.max(i.carteira_kg, 0))), 1), p = v => Math.max(0, v / max * 100);
   return `<div class="legend"><span><i class="sw" style="background:var(--accent)"></i>Realizado</span><span><i class="sw" style="background:var(--accent-soft)"></i>Carteira</span><span><i class="sw tick"></i>Meta</span><span><i class="sw" style="width:0;height:14px;border-left:2px dashed var(--ink-2);border-radius:0"></i>Previsto até o dia</span></div>
-  <div class="hbars">${itens.map(i => `<div class="hrow" data-tip="<b>${i.codprod} — ${esc(i.descrprod)}</b><br>Meta: ${num(i.meta_kg)} kg<br>Previsto até o dia: ${num(i.previsto_kg)} kg<br>Realizado: ${num(i.realizado_kg)} kg (${pct(i.perc_meta)} da meta)<br>Carteira: ${num(i.carteira_kg)} kg<br><span class=k>Pedidos no dia: ${num(i.pedidos_dia)} · ${num(i.pedido_dia_kg)} kg</span>">
-    <span class="lab" title="${esc(i.descrprod)}">${i.codprod} — ${esc(i.descrprod)}</span>
+  <div class="hbars">${itens.map(i => `<div class="hrow" data-tip="<b>${rotulo(i)}</b><br>Meta: ${num(i.meta_kg)} kg<br>Previsto até o dia: ${num(i.previsto_kg)} kg<br>Realizado: ${num(i.realizado_kg)} kg (${pct(i.perc_meta)} da meta)<br>Carteira: ${num(i.carteira_kg)} kg<br><span class=k>Pedidos no dia: ${num(i.pedidos_dia)} · ${num(i.pedido_dia_kg)} kg</span>">
+    <span class="lab" title="${esc(i.descrprod)}">${rotulo(i)}</span>
     <span class="track"><span class="b c" style="width:${p(i.realizado_kg + Math.max(i.carteira_kg, 0))}%"></span><span class="b v" style="width:${p(i.realizado_kg)}%"></span>
       <span style="position:absolute;top:-2px;bottom:-2px;left:${p(i.previsto_kg)}%;border-left:2px dashed var(--ink-2)"></span><span class="t" style="left:${p(i.meta_kg || 0)}%"></span></span>
     <span class="val">${pct(i.perc_meta, 0)}</span></div>`).join("")}</div>`;
@@ -725,7 +856,7 @@ async function verSqlFoco() {
   const sql = await (await fetch(`/api/foco/sql?periodo=${PF}`)).text();
   const d = gaveta({
     titulo: "SELECT para o Sankhya (Oracle)", sub: "Gerada com os itens e metas configurados · somente leitura",
-    corpo: `<div class="note">Rode cada consulta (A, B, C, D) separadamente no DbExplorer. <b>A</b>: acompanhamento por item · <b>B</b>: por vendedor · <b>C</b>: pedidos do mês, para importar aqui em Dados › Importar planilhas · <b>D</b>: conferência de setembro/2026.</div>
+    corpo: `<div class="note">Rode cada consulta (A a E) separadamente no DbExplorer. <b>A</b>: acompanhamento por item · <b>B</b>: por vendedor · <b>C</b>: pedidos do mês, para importar aqui em Dados › Importar planilhas · <b>D</b>: conferência de setembro/2026 · <b>E</b>: acompanhamento diário.</div>
       <div class="toolbar"><button class="btn small" id="sql-copiar">Copiar SELECT</button><a class="btn ghost small" href="/api/foco/sql?periodo=${PF}" download="itens_foco_${PF}.sql">Baixar .sql</a></div>
       <pre style="white-space:pre;overflow:auto;max-height:60vh;background:var(--surface-2);border-radius:10px;padding:12px;font-size:12px;margin:0">${esc(sql)}</pre>`,
   });

@@ -102,7 +102,16 @@ a soma das metas do produto no resumo). O botão **SELECT para o Sankhya** gera
 - **A** acompanhamento por item direto no Oracle; **B** por vendedor;
 - **C** pedidos do mês (TGFCAB `TIPMOV = 'P'`): exporte e importe em Dados › Importar planilhas para
   ver pedidos do dia e carteira no sistema;
-- **D** conferência de setembro/2026 com os totais que o sistema calculou.
+- **D** conferência de setembro/2026 com os totais que o sistema calculou;
+- **E** acompanhamento diário (dia × item: realizado e pedidos).
+
+A tela tem três visões (botões no topo):
+
+- **Por item** — meta, previsto, realizado, pedidos do dia, carteira e projeção de cada item;
+- **Por vendedor** — meta (do Resumo de Metas), previsto, realizado em kg e R$, faturado e pedidos
+  do dia, carteira, falta e clientes de cada vendedor, mais a matriz vendedor × item;
+- **Acompanhamento diário** — todos os dias do mês com meta do dia, realizado, diferença,
+  acumulado x previsto acumulado e pedidos; gráficos diário e acumulado. Filtre por item no seletor.
 
 Previsto até o dia = meta × dias úteis decorridos ÷ dias úteis do mês (segunda a sábado).
 

@@ -1,6 +1,6 @@
 -- =====================================================================================
 -- ITENS FOCO DO MÊS — acompanhamento meta x previsto x realizado x pedidos do dia (Oracle)
--- SOMENTE LEITURA. Rode cada consulta (A, B, C, D) separadamente.
+-- SOMENTE LEITURA. Rode cada consulta (A, B, C, D, E) separadamente.
 --
 -- Regras, tiradas das planilhas que já conferimos (Demonstrativo e Resumo de Metas 09/2026):
 --   * Realizado = vendas + devoluções (devolução entra negativa), bonificação (TOP 501) fica fora.
@@ -215,3 +215,46 @@ WHERE CAB.DTMOV >= DATE '2026-09-01' AND CAB.DTMOV < DATE '2026-10-01'
   AND ITE.CODPROD IN (90346, 871, 32537, 3465, 949, 85847, 11145)
 GROUP BY ITE.CODPROD, PR.DESCRPROD
 ORDER BY ITE.CODPROD;
+
+
+-- -------------------------------------------------------------------------------------
+-- E) ACOMPANHAMENTO DIÁRIO DO MÊS — por dia e item: realizado (notas) e pedidos do dia
+--    Uma linha por dia do mês (inclusive dias sem venda). Meta do dia = meta do mês do bloco F
+--    da consulta A dividida pelos dias úteis (segunda a sábado), calculada na planilha ou no sistema.
+-- -------------------------------------------------------------------------------------
+SELECT TO_CHAR(DIAS.DIA, 'YYYY-MM-DD')                                AS DIA,
+       TO_CHAR(DIAS.DIA, 'DY', 'NLS_DATE_LANGUAGE=PORTUGUESE')         AS SEMANA,
+       ITENS.CODPROD,
+       ROUND(NVL(R.KG, 0), 1)                                          AS REALIZADO_KG,
+       ROUND(NVL(R.VLR, 0), 2)                                         AS REALIZADO_VLR,
+       NVL(P.PEDIDOS, 0)                                               AS PEDIDOS,
+       ROUND(NVL(P.KG, 0), 1)                                          AS PEDIDO_KG
+FROM (SELECT TRUNC(SYSDATE, 'MM') + LEVEL - 1 AS DIA FROM DUAL
+      CONNECT BY LEVEL <= TO_NUMBER(TO_CHAR(LAST_DAY(SYSDATE), 'DD'))) DIAS
+CROSS JOIN (SELECT CODPROD FROM TGFPRO WHERE CODPROD IN (90346, 871, 32537, 3465, 949, 85847, 11145)) ITENS
+LEFT JOIN (
+        SELECT TRUNC(CAB.DTMOV) DIA, ITE.CODPROD,
+               SUM(SG.S * CASE WHEN ITE.CODVOL = 'KG' THEN ITE.QTDNEG ELSE ITE.QTDNEG * NVL(NULLIF(PR.PESOLIQ, 0), 1) END) KG,
+               SUM(SG.S * ITE.VLRTOT) VLR
+        FROM TGFCAB CAB
+        JOIN TGFITE ITE ON ITE.NUNOTA = CAB.NUNOTA
+        JOIN TGFPRO PR  ON PR.CODPROD = ITE.CODPROD
+        JOIN (SELECT 'V' T, 1 S FROM DUAL UNION ALL SELECT 'D', -1 FROM DUAL) SG ON SG.T = CAB.TIPMOV
+        WHERE CAB.DTMOV >= TRUNC(SYSDATE, 'MM') AND CAB.DTMOV < ADD_MONTHS(TRUNC(SYSDATE, 'MM'), 1)
+          AND CAB.STATUSNOTA = 'L'
+          AND CAB.CODTIPOPER IN (500, 504, 506, 512, 513, 240, 241, 252, 253)
+          AND ITE.CODPROD IN (90346, 871, 32537, 3465, 949, 85847, 11145)
+        GROUP BY TRUNC(CAB.DTMOV), ITE.CODPROD
+     ) R ON R.DIA = DIAS.DIA AND R.CODPROD = ITENS.CODPROD
+LEFT JOIN (
+        SELECT TRUNC(CAB.DTNEG) DIA, ITE.CODPROD, COUNT(DISTINCT CAB.NUNOTA) PEDIDOS,
+               SUM(CASE WHEN ITE.CODVOL = 'KG' THEN ITE.QTDNEG ELSE ITE.QTDNEG * NVL(NULLIF(PR.PESOLIQ, 0), 1) END) KG
+        FROM TGFCAB CAB
+        JOIN TGFITE ITE ON ITE.NUNOTA = CAB.NUNOTA
+        JOIN TGFPRO PR  ON PR.CODPROD = ITE.CODPROD
+        WHERE CAB.TIPMOV = 'P'
+          AND CAB.DTNEG >= TRUNC(SYSDATE, 'MM') AND CAB.DTNEG < ADD_MONTHS(TRUNC(SYSDATE, 'MM'), 1)
+          AND ITE.CODPROD IN (90346, 871, 32537, 3465, 949, 85847, 11145)
+        GROUP BY TRUNC(CAB.DTNEG), ITE.CODPROD
+     ) P ON P.DIA = DIAS.DIA AND P.CODPROD = ITENS.CODPROD
+ORDER BY DIAS.DIA, ITENS.CODPROD;
